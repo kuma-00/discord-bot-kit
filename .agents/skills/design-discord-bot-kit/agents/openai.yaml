@@ -1,0 +1,4 @@
+interface:
+  display_name: "Design Discord Bot Kit"
+  short_description: "Design and review reusable Discord bot infrastructure"
+  default_prompt: "Use $design-discord-bot-kit to design a package or review an architecture change."

@@ -1,0 +1,72 @@
+---
+name: design-discord-bot-kit
+description: Design, implement, and review reusable Discord bot infrastructure in the discord-bot-kit repository. Use for package additions, public API changes, configuration loading, HTTP or SSE contracts, Discord client lifecycle and registries, backend or frontend core changes, Elysia or Svelte adapters, JSR publishing changes, and dependency-boundary reviews.
+---
+
+# Design Discord Bot Kit
+
+Keep the reusable Bun library independent from bot-specific domains. Treat the
+repository documentation as the architecture source of truth.
+
+## Workflow
+
+1. Read the relevant documents before changing code:
+   - Architecture or package ownership: `docs/architecture.md`
+   - Dependency changes: `docs/package-boundaries.md`
+   - Configuration: `docs/configuration.md`
+   - HTTP, errors, or SSE: `docs/communication.md`
+   - Discord client, commands, or events: `docs/bot-foundation.md`
+   - Foundational tradeoffs: `docs/decisions/0001-initial-architecture.md`
+2. Classify the requested behavior as reusable infrastructure, a framework
+   adapter, or a bot-specific domain.
+3. Keep bot-specific domains outside this repository. Do not modify
+   `nicobot-v6`, `gbot-v8Engine`, or `botbase` unless migration is explicitly
+   requested.
+4. Put framework-neutral behavior in a core package. Put Elysia, Svelte, or
+   another framework integration in an adapter package.
+5. Define network boundaries with Standard Schema-compatible runtime schemas.
+   Validate both input and output.
+6. Preserve the dependency directions in `docs/package-boundaries.md`. When a
+   direction must change, update the boundary test and ADR in the same task.
+7. Add focused Bun tests for success, invalid input, external failure,
+   cancellation, and lifecycle cleanup as applicable.
+8. Run:
+
+```sh
+bun run biome:write
+bun run check
+bun run test
+```
+
+Run `bun run jsr:dry-run` when exported symbols, dependencies, manifests, or
+release metadata change.
+
+## Package Placement
+
+Use the existing responsibilities:
+
+- `config`: source merging and configuration validation
+- `contracts`: framework-neutral runtime contracts and envelopes
+- `transport`: Fetch and SSE client behavior
+- `bot`: Discord.js lifecycle and static registries
+- `backend`: Request/Response routes, auth, errors, and SSE broker
+- `elysia`: Elysia adapter only
+- `frontend`: UI-neutral client and observable state
+- `svelte`: Svelte store adapter only
+
+Create a new package only when the responsibility would otherwise force an
+unrelated dependency or framework into an existing package.
+
+## Design Guardrails
+
+- Support Bun as the only guaranteed runtime.
+- Prefer Web standard APIs inside framework-neutral packages.
+- Keep JSR public symbols explicitly typed and documented.
+- Do not bypass JSR slow-type checks.
+- Keep commands and events statically registered; do not add runtime directory
+  scanning.
+- Keep realtime v0.1 behavior on SSE. Add WebSocket only after an explicit
+  architecture decision.
+- Never expose configured secrets in errors or logs.
+- Avoid compatibility layers unless a consumer requirement explicitly needs
+  one.

@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.turbo/
+.env
+config/*.yml
+!config/*.example.yml

@@ -1,0 +1,14 @@
+{
+    "$schema": "https://turbo.build/schema.json",
+    "tasks": {
+        "check": {
+            "dependsOn": ["^check"]
+        },
+        "test": {
+            "dependsOn": ["^test"]
+        },
+        "biome:write": {
+            "cache": false
+        }
+    }
+}
