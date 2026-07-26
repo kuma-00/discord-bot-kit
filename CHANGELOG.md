@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/kuma-00/discord-bot-kit/compare/v0.3.0...v0.3.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* publish JSR packages in dependency order ([3968d04](https://github.com/kuma-00/discord-bot-kit/commit/3968d042d347fadb8907c6a61e0fdf3f289db612))
+
 ## [0.3.0](https://github.com/kuma-00/discord-bot-kit/compare/v0.2.1...v0.3.0) (2026-07-26)
 
 
