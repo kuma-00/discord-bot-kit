@@ -46,6 +46,8 @@ Biome override for `**/jsr.json` at `json.formatter.expand: "always"` so the
 generated release commit passes `bun run check`. If release tooling or manifest
 formatting changes, validate the generated release-style `jsr.json` files
 instead of checking only the pre-release working tree.
+Keep `include-component-in-tag: false` so Release Please emits `vX.Y.Z`; the
+publish script and manual retry input use that component-free tag format.
 
 ## Package Placement
 

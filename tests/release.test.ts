@@ -14,6 +14,7 @@ interface ExtraFile {
 }
 
 interface ReleasePleaseConfig {
+    readonly "include-component-in-tag": boolean;
     readonly packages: {
         readonly ".": {
             readonly "extra-files": readonly ExtraFile[];
@@ -56,6 +57,7 @@ describe("release configuration", () => {
         const config = (await Bun.file(
             join(repositoryDirectory, "release-please-config.json"),
         ).json()) as ReleasePleaseConfig;
+        expect(config["include-component-in-tag"]).toBe(false);
         const extraFiles = config.packages["."]["extra-files"];
         const packageNames = (
             await readdir(join(repositoryDirectory, "packages"))
