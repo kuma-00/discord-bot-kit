@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/kuma-00/discord-bot-kit/compare/discord-bot-kit-v0.2.0...discord-bot-kit-v0.2.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* preserve expanded jsr manifest formatting ([3301a97](https://github.com/kuma-00/discord-bot-kit/commit/3301a97c1a2096f0d8c72aebe9c69f34328cbe99))
+
 ## [0.2.0](https://github.com/kuma-00/discord-bot-kit/compare/discord-bot-kit-v0.1.0...discord-bot-kit-v0.2.0) (2026-07-26)
 
 
