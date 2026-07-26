@@ -28,6 +28,16 @@ bun run jsr:dry-run
 
 `jsr:dry-run`は公開検証だけを実行し、JSRへパッケージを公開しません。
 
+## Releases
+
+`main`へ入ったConventional Commitをもとに、release-pleaseが全パッケージ共通のRelease PRを作成します。
+
+- `fix:`はpatch versionを更新します。
+- `feat:`はminor versionを更新します。
+- `feat!:`または`BREAKING CHANGE:`はmajor versionを更新します。
+
+Release PRをmergeすると、`vX.Y.Z`タグとGitHub Releaseを作成し、全パッケージをJSRへ公開します。公開に失敗した場合は、GitHub Actionsの`Release` workflowを手動実行して既存のタグを指定すると再試行できます。
+
 ## Documents
 
 - [アーキテクチャ](docs/architecture.md)
@@ -39,4 +49,4 @@ bun run jsr:dry-run
 
 ## Status
 
-v0.1.0ではライブラリと自動テストのみを提供します。既存Botの移植、Exampleアプリ、WebSocket、JSRへの実公開は含みません。
+v0.1.0ではライブラリ、自動テスト、JSRへの自動公開を提供します。既存Botの移植、Exampleアプリ、WebSocketは含みません。

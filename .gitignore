@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .turbo/
+.codegraph/
 .env
 config/*.yml
 !config/*.example.yml
