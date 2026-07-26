@@ -41,6 +41,12 @@ bun run test
 Run `bun run jsr:dry-run` when exported symbols, dependencies, manifests, or
 release metadata change.
 
+Release Please rewrites JSON `extra-files` with expanded arrays. Keep the
+Biome override for `**/jsr.json` at `json.formatter.expand: "always"` so the
+generated release commit passes `bun run check`. If release tooling or manifest
+formatting changes, validate the generated release-style `jsr.json` files
+instead of checking only the pre-release working tree.
+
 ## Package Placement
 
 Use the existing responsibilities:

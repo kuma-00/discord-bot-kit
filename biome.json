@@ -14,6 +14,16 @@
         "indentStyle": "space",
         "indentWidth": 4
     },
+    "overrides": [
+        {
+            "includes": ["**/jsr.json"],
+            "json": {
+                "formatter": {
+                    "expand": "always"
+                }
+            }
+        }
+    ],
     "linter": {
         "enabled": true,
         "rules": {
