@@ -1,6 +1,6 @@
 {
     "name": "@kuma-00/bot-kit-voice",
-    "version": "0.2.1",
+    "version": "0.3.0",
     "license": "MIT",
     "type": "module",
     "exports": "./src/index.ts",
