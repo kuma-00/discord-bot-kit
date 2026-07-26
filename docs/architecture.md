@@ -7,15 +7,11 @@ Discord Bot、Backend、Frontendに繰り返し現れる技術的な仕組みを
 ## レイヤー
 
 ```text
-config        contracts
-                 ↑
-              transport
-              ↗      ↖
-            bot     frontend ← svelte
+bot ───────→ registry       config       voice
 
-backend ← elysia
-   ↑
-contracts
+transport ─→ contracts
+frontend ──→ contracts, transport ←── svelte
+backend ───→ contracts ←── elysia
 ```
 
 - Core packageはframeworkやUIへ依存しません。
@@ -28,7 +24,9 @@ contracts
 - 設定sourceの統合と検証
 - HTTP・イベント契約
 - timeout、abort、API key、SSE再接続
-- Discord Clientのlifecycle、生成された静的Registry、型安全なCommand階層
+- 汎用的な静的Registry生成
+- Discord Clientのlifecycle、型安全なCommand階層
+- Discord Voice接続、切断復旧、cleanup
 - framework-neutralなroute実行、認証、エラー変換
 - FrontendのAPI結果とrealtime状態
 - Elysia、Svelteへの薄いadapter

@@ -1,0 +1,16 @@
+{
+    "name": "@kuma-00/bot-kit-registry",
+    "version": "0.1.0",
+    "license": "MIT",
+    "type": "module",
+    "exports": "./src/index.ts",
+    "scripts": {
+        "check": "tsc -p tsconfig.json && biome check .",
+        "test": "bun test",
+        "biome:write": "biome check --write ."
+    },
+    "devDependencies": {
+        "@types/bun": "1.3.13",
+        "typescript": "7.0.2"
+    }
+}

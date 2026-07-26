@@ -6,8 +6,10 @@
 | --- | --- |
 | `config` | なし |
 | `contracts` | なし |
+| `registry` | なし |
 | `transport` | `contracts` |
-| `bot` | なし |
+| `bot` | `registry` |
+| `voice` | なし |
 | `backend` | `contracts` |
 | `elysia` | `backend`, `contracts` |
 | `frontend` | `contracts`, `transport` |
@@ -20,6 +22,8 @@
 - Coreからadapterへの依存
 - Runtime app同士に相当する`bot`、`backend`、`frontend`間の直接依存
 - `contracts`からDiscord.js、Elysia、Svelteへの依存
+- `registry`へのDiscord.jsやBot固有型の流入
+- `voice`へのPlayer、Queue、DB、Bot runtimeの流入
 - `backend`へのElysia型の流入
 - `frontend`へのSvelte型やDOM UIの流入
 - 公開sourceでのリポジトリ固有alias

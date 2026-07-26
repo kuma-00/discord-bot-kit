@@ -69,6 +69,16 @@
                 },
                 {
                     "type": "json",
+                    "path": "packages/registry/package.json",
+                    "jsonpath": "$.version"
+                },
+                {
+                    "type": "json",
+                    "path": "packages/registry/jsr.json",
+                    "jsonpath": "$.version"
+                },
+                {
+                    "type": "json",
                     "path": "packages/svelte/package.json",
                     "jsonpath": "$.version"
                 },
@@ -85,6 +95,16 @@
                 {
                     "type": "json",
                     "path": "packages/transport/jsr.json",
+                    "jsonpath": "$.version"
+                },
+                {
+                    "type": "json",
+                    "path": "packages/voice/package.json",
+                    "jsonpath": "$.version"
+                },
+                {
+                    "type": "json",
+                    "path": "packages/voice/jsr.json",
                     "jsonpath": "$.version"
                 }
             ]

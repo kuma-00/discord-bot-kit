@@ -20,6 +20,7 @@
         "biome:write": "biome check --write ."
     },
     "dependencies": {
+        "@kuma-00/bot-kit-registry": "workspace:*",
         "discord.js": "^14.25.1"
     },
     "devDependencies": {

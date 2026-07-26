@@ -15,7 +15,8 @@ handlerへ渡します。
 
 ## 静的Registry生成
 
-利用側の生成スクリプトから`generateBotRegistry`を呼びます。generatorは指定された
+利用側の生成スクリプトから`generateBotRegistry`を呼びます。generatorは
+`@kuma-00/bot-kit-registry`の汎用静的Registry生成を利用して、指定された
 Command/Eventディレクトリをソートして走査し、静的importだけを含むTypeScriptを
 生成します。`.test.ts`、`.spec.ts`、`.d.ts`は除外されます。
 

@@ -16,6 +16,8 @@
 - Realtime v0.1.0はSSEのみとする。
 - Discord Command/Eventは生成時のディレクトリ検出から静的Registryを生成する。
   実行時のディレクトリ走査は行わない。
+- 静的Registry生成はDiscord非依存の`registry` packageに置く。
+- Discord Voice接続はPlayerやBot runtimeから分離した`voice` packageに置く。
 - Bot固有domain、DB実装、UIを共通libraryへ含めない。
 
 ## Consequences

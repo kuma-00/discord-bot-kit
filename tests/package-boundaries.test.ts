@@ -5,8 +5,10 @@ import { join } from "node:path";
 const allowed: Readonly<Record<string, ReadonlyArray<string>>> = {
     config: [],
     contracts: [],
+    registry: [],
     transport: ["contracts"],
-    bot: [],
+    bot: ["registry"],
+    voice: [],
     backend: ["contracts"],
     elysia: ["backend", "contracts"],
     frontend: ["contracts", "transport"],

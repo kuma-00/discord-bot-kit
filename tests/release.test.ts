@@ -67,7 +67,7 @@ describe("release configuration", () => {
             ])
             .sort();
 
-        expect(extraFiles).toHaveLength(16);
+        expect(extraFiles).toHaveLength(20);
         expect(extraFiles.map(({ path }) => path).sort()).toEqual(
             expectedPaths,
         );

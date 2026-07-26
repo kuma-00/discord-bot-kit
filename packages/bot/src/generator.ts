@@ -1,5 +1,10 @@
-import { dirname, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { resolve } from "node:path";
+import {
+    buildStaticRegistryFragment,
+    StaticRegistryError,
+    type StaticRegistryFragment,
+    type StaticRegistryValidator,
+} from "@kuma-00/bot-kit-registry";
 import { RegistryValidationError } from "./errors.ts";
 
 const BOT_PACKAGE_NAME = "@kuma-00/bot-kit-bot";
@@ -23,68 +28,61 @@ export function defineBotRegistryConfig<
     return config;
 }
 
-function isRuntimeModule(path: string): boolean {
-    return (
-        path.endsWith(".ts") &&
-        !path.endsWith(".d.ts") &&
-        !path.endsWith(".test.ts") &&
-        !path.endsWith(".spec.ts")
-    );
-}
-
-async function discoverModules(
-    sourceDir: string,
-    outputPath: string,
-): Promise<string[]> {
-    const absoluteSource = resolve(sourceDir);
-    const absoluteOutput = resolve(outputPath);
-    const files: string[] = [];
-    for await (const path of new Bun.Glob("**/*.ts").scan(absoluteSource)) {
-        const absolutePath = resolve(absoluteSource, path);
-        if (absolutePath !== absoluteOutput && isRuntimeModule(path)) {
-            files.push(absolutePath);
-        }
-    }
-    files.sort();
-    if (files.length === 0) {
+function validateCommand(value: unknown, file: string): true {
+    const valid =
+        typeof value === "object" &&
+        value !== null &&
+        typeof (value as { id?: unknown }).id === "string" &&
+        typeof (value as { kind?: unknown }).kind === "string" &&
+        "builder" in value;
+    if (!valid) {
         throw new RegistryValidationError(
-            "empty-source",
-            `No runtime TypeScript modules found in ${absoluteSource}`,
+            "invalid-module",
+            `${file} must default export a valid bot command`,
         );
     }
-    return files;
+    return true;
 }
 
-function moduleImportPath(outputPath: string, modulePath: string): string {
-    let path = relative(dirname(outputPath), modulePath).split(sep).join("/");
-    if (!path.startsWith(".")) path = `./${path}`;
-    return path;
+function validateEvent(value: unknown, file: string): true {
+    const valid =
+        typeof value === "object" &&
+        value !== null &&
+        typeof (value as { id?: unknown }).id === "string" &&
+        typeof (value as { event?: unknown }).event === "string" &&
+        typeof (value as { execute?: unknown }).execute === "function";
+    if (!valid) {
+        throw new RegistryValidationError(
+            "invalid-module",
+            `${file} must default export a valid bot event`,
+        );
+    }
+    return true;
 }
 
-async function validateDefaultExports(
-    files: readonly string[],
-    expected: "command" | "event",
-): Promise<void> {
-    for (const file of files) {
-        const loaded = (await import(pathToFileURL(file).href)) as {
-            default?: unknown;
-        };
-        const value = loaded.default;
-        const valid =
-            typeof value === "object" &&
-            value !== null &&
-            typeof (value as { id?: unknown }).id === "string" &&
-            (expected === "event"
-                ? typeof (value as { event?: unknown }).event === "string" &&
-                  typeof (value as { execute?: unknown }).execute === "function"
-                : typeof (value as { kind?: unknown }).kind === "string" &&
-                  "builder" in value);
-        if (!valid) {
-            throw new RegistryValidationError(
-                "invalid-module",
-                `${file} must default export a valid bot ${expected}`,
-            );
-        }
+async function buildBotFragment(
+    sourceDir: string,
+    outputPath: string,
+    exportName: string,
+    identifierPrefix: string,
+    validate: StaticRegistryValidator,
+): Promise<StaticRegistryFragment> {
+    try {
+        return await buildStaticRegistryFragment(
+            {
+                sourceDir,
+                outputPath,
+                exportName,
+                validate,
+            },
+            identifierPrefix,
+        );
+    } catch (error) {
+        if (!(error instanceof StaticRegistryError)) throw error;
+        throw new RegistryValidationError(
+            error.code === "empty-source" ? "empty-source" : "invalid-module",
+            error.message,
+        );
     }
 }
 
@@ -96,37 +94,29 @@ export async function buildBotRegistryModule(
     readonly eventCount: number;
 }> {
     const outputPath = resolve(config.outputPath);
-    const commandFiles = await discoverModules(
+    const commands = await buildBotFragment(
         config.commandSourceDir,
         outputPath,
+        "commands",
+        "command",
+        (value, { file }) => validateCommand(value, file),
     );
-    const eventFiles = await discoverModules(config.eventSourceDir, outputPath);
-    await validateDefaultExports(commandFiles, "command");
-    await validateDefaultExports(eventFiles, "event");
-
-    const imports = [
-        ...commandFiles.map(
-            (file, index) =>
-                `import command${index} from ${JSON.stringify(moduleImportPath(outputPath, file))};`,
-        ),
-        ...eventFiles.map(
-            (file, index) =>
-                `import event${index} from ${JSON.stringify(moduleImportPath(outputPath, file))};`,
-        ),
-    ];
-    const commands = commandFiles
-        .map((_, index) => `command${index}`)
-        .join(", ");
-    const events = eventFiles.map((_, index) => `event${index}`).join(", ");
+    const events = await buildBotFragment(
+        config.eventSourceDir,
+        outputPath,
+        "events",
+        "event",
+        (value, { file }) => validateEvent(value, file),
+    );
     const content = `// Generated by ${BOT_PACKAGE_NAME}. Do not edit.
 import {
     createBotRegistry,
     createDiscordBot as createRuntimeDiscordBot,
     type DiscordBotRuntimeOptions,
 } from "${BOT_PACKAGE_NAME}";
-${imports.join("\n")}
+${[...commands.imports, ...events.imports].join("\n")}
 
-export const botRegistry = createBotRegistry([${commands}], [${events}]);
+export const botRegistry = createBotRegistry([${commands.identifiers.join(", ")}], [${events.identifiers.join(", ")}]);
 export const applicationCommands = botRegistry.applicationCommands;
 export const createGeneratedDiscordBot = (
     options: DiscordBotRuntimeOptions,
@@ -134,8 +124,8 @@ export const createGeneratedDiscordBot = (
 `;
     return {
         content,
-        commandCount: commandFiles.length,
-        eventCount: eventFiles.length,
+        commandCount: commands.entryCount,
+        eventCount: events.entryCount,
     };
 }
 
@@ -162,8 +152,9 @@ export async function checkBotRegistry(
 ): Promise<GenerateBotRegistryResult> {
     const generated = await buildBotRegistryModule(config);
     const outputPath = resolve(config.outputPath);
-    const exists = await Bun.file(outputPath).exists();
-    const current = exists ? await Bun.file(outputPath).text() : undefined;
+    const current = (await Bun.file(outputPath).exists())
+        ? await Bun.file(outputPath).text()
+        : undefined;
     if (current !== generated.content) {
         throw new Error(
             `Generated bot registry is stale: ${outputPath}. Run generateBotRegistry().`,
