@@ -114,7 +114,7 @@ export class CommandDispatcher<TClient extends Client> {
         if (
             "guildOnly" in command &&
             command.guildOnly &&
-            !interaction.inGuild()
+            !interaction.inCachedGuild()
         ) {
             return { handled: false, reason: "guild-only", commandId: key };
         }

@@ -200,6 +200,7 @@ export class VoiceConnectionController {
     ): Promise<VoiceConnection> {
         this.explicitDisconnect = false;
         this.recoveryController?.abort();
+        const previousConnection = this._connection;
         this.detachConnection();
         this.setState("connecting");
         try {
@@ -210,6 +211,9 @@ export class VoiceConnectionController {
                 selfMute: this.options.selfMute ?? false,
                 selfDeaf: this.options.selfDeaf ?? false,
             });
+            if (previousConnection && previousConnection !== connection) {
+                previousConnection.destroy();
+            }
             this._channel = channel;
             this._connection = connection;
             this.attachConnection(connection);
@@ -219,7 +223,7 @@ export class VoiceConnectionController {
                 signal,
             );
             this.setState("ready");
-            this.options.onConnected?.(connection);
+            this.runHook(() => this.options.onConnected?.(connection));
             return connection;
         } catch (error) {
             this.detachConnection();
@@ -259,6 +263,11 @@ export class VoiceConnectionController {
                 Promise.any([
                     this.adapter.enterState(
                         connection,
+                        VoiceConnectionStatus.Ready,
+                        gracePeriodMs,
+                    ),
+                    this.adapter.enterState(
+                        connection,
                         VoiceConnectionStatus.Signalling,
                         gracePeriodMs,
                     ),
@@ -283,7 +292,9 @@ export class VoiceConnectionController {
 
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             if (controller.signal.aborted || this.explicitDisconnect) return;
-            this.options.onRecoveryAttempt?.(attempt, connection);
+            this.runHook(() =>
+                this.options.onRecoveryAttempt?.(attempt, connection),
+            );
             try {
                 if (!connection.rejoin()) {
                     throw new Error("Voice connection rejected rejoin");
@@ -294,7 +305,7 @@ export class VoiceConnectionController {
                     controller.signal,
                 );
                 this.setState("ready");
-                this.options.onConnected?.(connection);
+                this.runHook(() => this.options.onConnected?.(connection));
                 return;
             } catch (error) {
                 lastError = error;
@@ -317,7 +328,7 @@ export class VoiceConnectionController {
         if (controller.signal.aborted || this.explicitDisconnect) return;
         const error = new VoiceConnectionRecoveryError(maxAttempts, lastError);
         this.setState("error");
-        this.options.onRecoveryFailed?.(error, connection);
+        this.runHook(() => this.options.onRecoveryFailed?.(error, connection));
         this.reportError(error);
     }
 
@@ -356,12 +367,25 @@ export class VoiceConnectionController {
         if (state === this._state) return;
         const previous = this._state;
         this._state = state;
-        this.options.onStateChange?.(state, previous);
+        this.runHook(() => this.options.onStateChange?.(state, previous));
+    }
+
+    private runHook(
+        hook: (() => Promise<void> | void | undefined) | undefined,
+    ): void {
+        if (!hook) return;
+        try {
+            void Promise.resolve(hook()).catch((error) =>
+                this.reportError(error),
+            );
+        } catch (error) {
+            this.reportError(error);
+        }
     }
 
     private reportError(error: unknown): void {
         try {
-            this.options.onError?.(error);
+            void Promise.resolve(this.options.onError?.(error)).catch(() => {});
         } catch {
             // Error reporting must not create an unhandled lifecycle rejection.
         }

@@ -80,7 +80,7 @@ export class DiscordBot<TClient extends Client = Client> {
         try {
             this.client.destroy();
             this.started = false;
-            this.options.logger?.info?.("Discord bot stopped");
+            this.logInfo("Discord bot stopped");
         } catch (error) {
             await this.handleError(error, {
                 phase: "lifecycle",
@@ -95,7 +95,7 @@ export class DiscordBot<TClient extends Client = Client> {
         try {
             await this.client.login(this.options.token);
             this.started = true;
-            this.options.logger?.info?.("Discord bot started");
+            this.logInfo("Discord bot started");
             return this.client;
         } catch (error) {
             this.unregisterHandlers();
@@ -171,13 +171,45 @@ export class DiscordBot<TClient extends Client = Client> {
         context: BotErrorContext,
     ): Promise<void> {
         if (this.options.onError) {
-            await this.options.onError(error, context);
-            return;
+            try {
+                await this.options.onError(error, context);
+                return;
+            } catch (handlerError) {
+                this.logError("Discord bot error handler failed", {
+                    error: handlerError,
+                    originalError: error,
+                    ...context,
+                });
+                return;
+            }
         }
-        this.options.logger?.error?.("Discord bot operation failed", {
+        this.logError("Discord bot operation failed", {
             error,
             ...context,
         });
+    }
+
+    private logError(
+        message: string,
+        context: Readonly<Record<string, unknown>>,
+    ): void {
+        try {
+            void Promise.resolve(
+                this.options.logger?.error?.(message, context),
+            ).catch(() => {});
+        } catch {
+            // Logging must not create an unhandled lifecycle rejection.
+        }
+    }
+
+    private logInfo(message: string): void {
+        try {
+            void Promise.resolve(this.options.logger?.info?.(message)).catch(
+                () => {},
+            );
+        } catch {
+            // Logging must not create an unhandled lifecycle rejection.
+        }
     }
 }
 

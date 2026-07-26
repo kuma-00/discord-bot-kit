@@ -197,6 +197,7 @@ describe("dispatcher", () => {
             isContextMenuCommand: () => false,
             isRepliable: () => true,
             inGuild: () => true,
+            inCachedGuild: () => true,
             deferReply: async ({ ephemeral }: { ephemeral: boolean }) => {
                 deferredEphemeral = ephemeral;
             },
@@ -235,6 +236,7 @@ describe("dispatcher", () => {
             isChatInputCommand: () => true,
             isContextMenuCommand: () => false,
             inGuild: () => false,
+            inCachedGuild: () => false,
             options: {
                 getSubcommandGroup: () => null,
                 getSubcommand: () => null,
@@ -251,6 +253,46 @@ describe("dispatcher", () => {
             handled: false,
             reason: "not-found",
         });
+    });
+
+    test("rejects uncached guild interactions for guild-only handlers", async () => {
+        let executed = false;
+        const registry = createBotRegistry([
+            {
+                kind: "chat-input",
+                id: "queue",
+                builder: new SlashCommandBuilder()
+                    .setName("queue")
+                    .setDescription("Manage the queue"),
+                guildOnly: true,
+                execute: () => {
+                    executed = true;
+                },
+            },
+        ]);
+        const dispatcher = new CommandDispatcher({
+            client: {} as Client,
+            registry,
+        });
+        const interaction = {
+            commandName: "queue",
+            isAutocomplete: () => false,
+            isChatInputCommand: () => true,
+            isContextMenuCommand: () => false,
+            inGuild: () => true,
+            inCachedGuild: () => false,
+            options: {
+                getSubcommandGroup: () => null,
+                getSubcommand: () => null,
+            },
+        } as unknown as ChatInputCommandInteraction;
+
+        expect(await dispatcher.dispatch(interaction)).toEqual({
+            handled: false,
+            reason: "guild-only",
+            commandId: "queue",
+        });
+        expect(executed).toBe(false);
     });
 
     test("reports timeout and aborts the handler signal", async () => {
@@ -294,6 +336,7 @@ describe("dispatcher", () => {
             isContextMenuCommand: () => false,
             isRepliable: () => true,
             inGuild: () => true,
+            inCachedGuild: () => true,
             options: {
                 getSubcommandGroup: () => null,
                 getSubcommand: () => null,
@@ -337,6 +380,7 @@ describe("dispatcher", () => {
             isContextMenuCommand: () => false,
             isRepliable: () => true,
             inGuild: () => true,
+            inCachedGuild: () => true,
             deferReply: () => Promise.reject(failure),
             options: {
                 getSubcommandGroup: () => null,
@@ -367,6 +411,114 @@ describe("operation tracker", () => {
 });
 
 describe("lifecycle", () => {
+    test("contains rejected error handlers and falls back to logging", async () => {
+        const handlerFailure = new Error("error handler failed");
+        const operationFailure = new Error("command failed");
+        const logged: unknown[] = [];
+        const fakeClient = {} as Client;
+        const bot = new DiscordBot(
+            createBotRegistry([
+                {
+                    kind: "chat-input",
+                    id: "queue",
+                    builder: new SlashCommandBuilder()
+                        .setName("queue")
+                        .setDescription("Manage the queue"),
+                    execute: () => {
+                        throw operationFailure;
+                    },
+                },
+            ]),
+            {
+                token: "token",
+                clientOptions: { intents: [] },
+                clientFactory: () => fakeClient,
+                onError: async () => {
+                    throw handlerFailure;
+                },
+                logger: {
+                    error: (message, context) => {
+                        logged.push({ message, context });
+                    },
+                },
+            },
+        );
+        const interaction = {
+            commandName: "queue",
+            isAutocomplete: () => false,
+            isChatInputCommand: () => true,
+            isContextMenuCommand: () => false,
+            inCachedGuild: () => false,
+            options: {
+                getSubcommandGroup: () => null,
+                getSubcommand: () => null,
+            },
+        } as unknown as ChatInputCommandInteraction;
+
+        expect(await bot.dispatcher.dispatch(interaction)).toEqual({
+            handled: true,
+            commandId: "queue",
+        });
+        expect(logged).toEqual([
+            {
+                message: "Discord bot error handler failed",
+                context: {
+                    error: handlerFailure,
+                    originalError: operationFailure,
+                    phase: "command",
+                    id: "queue",
+                    interaction,
+                    timedOut: false,
+                    aborted: false,
+                },
+            },
+        ]);
+    });
+
+    test("contains rejected asynchronous loggers", async () => {
+        const bot = new DiscordBot(
+            createBotRegistry([
+                {
+                    kind: "chat-input",
+                    id: "queue",
+                    builder: new SlashCommandBuilder()
+                        .setName("queue")
+                        .setDescription("Manage the queue"),
+                    execute: () => {
+                        throw new Error("command failed");
+                    },
+                },
+            ]),
+            {
+                token: "token",
+                clientOptions: { intents: [] },
+                clientFactory: () => ({}) as Client,
+                logger: {
+                    error: async () => {
+                        throw new Error("async logger failed");
+                    },
+                },
+            },
+        );
+        const interaction = {
+            commandName: "queue",
+            isAutocomplete: () => false,
+            isChatInputCommand: () => true,
+            isContextMenuCommand: () => false,
+            inCachedGuild: () => false,
+            options: {
+                getSubcommandGroup: () => null,
+                getSubcommand: () => null,
+            },
+        } as unknown as ChatInputCommandInteraction;
+
+        expect(await bot.dispatcher.dispatch(interaction)).toEqual({
+            handled: true,
+            commandId: "queue",
+        });
+        await Bun.sleep(0);
+    });
+
     test("registers once and removes listeners on stop", async () => {
         const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
         let loginCount = 0;

@@ -45,11 +45,11 @@ class MockVoiceConnection {
     }
 }
 
-function channel(id = "voice"): VoiceBasedChannel {
+function channel(id = "voice", guildId = "guild"): VoiceBasedChannel {
     return {
         id,
         guild: {
-            id: "guild",
+            id: guildId,
             voiceAdapterCreator: {},
         },
     } as unknown as VoiceBasedChannel;
@@ -89,7 +89,9 @@ describe("VoiceConnectionController", () => {
         const states: string[] = [];
         const controller = new VoiceConnectionController({
             adapter: fixture.value,
-            onStateChange: (state) => states.push(state),
+            onStateChange: (state) => {
+                states.push(state);
+            },
         });
         const first = controller.connect(channel());
         const second = controller.connect(channel());
@@ -99,6 +101,53 @@ describe("VoiceConnectionController", () => {
         expect(await second).toBe(connection as unknown as VoiceConnection);
         expect(controller.state).toBe("ready");
         expect(states).toEqual(["connecting", "ready"]);
+    });
+
+    test("routes state hook failures without failing the connection", async () => {
+        const connection = new MockVoiceConnection();
+        const fixture = adapter(connection);
+        const hookFailure = new Error("state hook failed");
+        const errors: unknown[] = [];
+        const controller = new VoiceConnectionController({
+            adapter: fixture.value,
+            onStateChange: () => {
+                throw hookFailure;
+            },
+            onError: (error) => {
+                errors.push(error);
+            },
+        });
+
+        expect(await controller.connect(channel())).toBe(
+            connection as unknown as VoiceConnection,
+        );
+        expect(controller.state).toBe("ready");
+        expect(errors).toEqual([hookFailure, hookFailure]);
+    });
+
+    test("contains rejected asynchronous hooks and error reporters", async () => {
+        const connection = new MockVoiceConnection();
+        const fixture = adapter(connection);
+        const hookFailure = new Error("async state hook failed");
+        let reported = 0;
+        const controller = new VoiceConnectionController({
+            adapter: fixture.value,
+            onStateChange: async () => {
+                throw hookFailure;
+            },
+            onError: async (error) => {
+                expect(error).toBe(hookFailure);
+                reported++;
+                throw new Error("async error reporter failed");
+            },
+        });
+
+        expect(await controller.connect(channel())).toBe(
+            connection as unknown as VoiceConnection,
+        );
+        await Bun.sleep(0);
+        expect(controller.state).toBe("ready");
+        expect(reported).toBe(2);
     });
 
     test("reconfigures the connection when the channel changes", async () => {
@@ -114,6 +163,28 @@ describe("VoiceConnectionController", () => {
             "second",
         ]);
         expect(controller.channel?.id).toBe("second");
+    });
+
+    test("destroys the previous connection when switching guilds", async () => {
+        const firstConnection = new MockVoiceConnection();
+        const secondConnection = new MockVoiceConnection();
+        const connections = [firstConnection, secondConnection];
+        const fixture: VoiceConnectionAdapter = {
+            join: () => connections.shift() as unknown as VoiceConnection,
+            enterState: async (connection) => connection,
+        };
+        const controller = new VoiceConnectionController({
+            adapter: fixture,
+        });
+
+        await controller.connect(channel("first", "guild-a"));
+        await controller.connect(channel("second", "guild-b"));
+
+        expect(firstConnection.destroyCalls).toBe(1);
+        expect(secondConnection.destroyCalls).toBe(0);
+        expect(controller.connection).toBe(
+            secondConnection as unknown as VoiceConnection,
+        );
     });
 
     test("serializes concurrent connections to different channels", async () => {
@@ -181,6 +252,30 @@ describe("VoiceConnectionController", () => {
         await controller.connect(channel());
         connection.emit(VoiceConnectionStatus.Disconnected);
         await Bun.sleep(1);
+        expect(controller.state).toBe("ready");
+        expect(connection.rejoinCalls).toBe(0);
+    });
+
+    test("accepts direct Ready recovery without rejoin", async () => {
+        const connection = new MockVoiceConnection();
+        let initialReady = true;
+        const fixture = adapter(connection, async (target, status) => {
+            if (initialReady && status === VoiceConnectionStatus.Ready) {
+                initialReady = false;
+                return target;
+            }
+            if (status === VoiceConnectionStatus.Ready) return target;
+            throw new Error(`did not enter ${status}`);
+        });
+        const controller = new VoiceConnectionController({
+            adapter: fixture.value,
+            recovery: { gracePeriodMs: 1, readyTimeoutMs: 1 },
+        });
+
+        await controller.connect(channel());
+        connection.emit(VoiceConnectionStatus.Disconnected);
+        await Bun.sleep(1);
+
         expect(controller.state).toBe("ready");
         expect(connection.rejoinCalls).toBe(0);
     });
@@ -285,8 +380,12 @@ describe("VoiceConnectionController", () => {
                 maxAttempts: 2,
                 backoffMs: 0,
             },
-            onRecoveryAttempt: (attempt) => attempts.push(attempt),
-            onRecoveryFailed: (error) => failures.push(error),
+            onRecoveryAttempt: (attempt) => {
+                attempts.push(attempt);
+            },
+            onRecoveryFailed: (error) => {
+                failures.push(error);
+            },
         });
         await controller.connect(channel());
         connection.emit(VoiceConnectionStatus.Disconnected);
