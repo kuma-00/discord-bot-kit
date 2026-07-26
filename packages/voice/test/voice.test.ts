@@ -453,4 +453,62 @@ describe("VoiceConnectionController", () => {
         expect(controller.state).toBe("destroyed");
         expect(connection.destroyCalls).toBe(1);
     });
+
+    test("disconnect aborts an in-progress connection and finishes idle", async () => {
+        const connection = new MockVoiceConnection();
+        const fixture = adapter(
+            connection,
+            () => new Promise<VoiceConnection>(() => {}),
+        );
+        const states: string[] = [];
+        const controller = new VoiceConnectionController({
+            adapter: fixture.value,
+            onStateChange: (state) => states.push(state),
+        });
+
+        const connecting = controller.connect(channel());
+        const disconnecting = controller.disconnect();
+        await expect(connecting).rejects.toBeInstanceOf(
+            VoiceConnectionConnectError,
+        );
+        await disconnecting;
+
+        expect(controller.state).toBe("idle");
+        expect(states).toEqual([
+            "connecting",
+            "error",
+            "disconnecting",
+            "idle",
+        ]);
+    });
+
+    test("disconnect stops recovery and prevents stale state updates", async () => {
+        const connection = new MockVoiceConnection();
+        let initialReady = true;
+        let recoveryStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            recoveryStarted = resolve;
+        });
+        const fixture = adapter(connection, async (target, status) => {
+            if (initialReady && status === VoiceConnectionStatus.Ready) {
+                initialReady = false;
+                return target;
+            }
+            recoveryStarted();
+            return new Promise<VoiceConnection>(() => {});
+        });
+        const controller = new VoiceConnectionController({
+            adapter: fixture.value,
+            recovery: { gracePeriodMs: 10_000 },
+        });
+
+        await controller.connect(channel());
+        connection.emit(VoiceConnectionStatus.Disconnected);
+        await started;
+        await controller.disconnect();
+        await Bun.sleep(0);
+
+        expect(controller.state).toBe("idle");
+        expect(connection.rejoinCalls).toBe(0);
+    });
 });

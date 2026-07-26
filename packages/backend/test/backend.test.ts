@@ -42,6 +42,97 @@ describe("backend core", () => {
         });
     });
 
+    test("uses default and explicit handler statuses", async () => {
+        const contract = defineHttpContract({
+            id: "status",
+            method: "POST",
+            path: "/status",
+            input: objectSchema,
+            output: objectSchema,
+            error: objectSchema,
+        });
+        const request = new Request("https://example.test/status");
+        const cases = [
+            {
+                result: { ok: true, data: { value: "ok" } } as const,
+                status: 200,
+            },
+            {
+                result: {
+                    ok: true,
+                    data: { value: "created" },
+                    status: 201,
+                } as const,
+                status: 201,
+            },
+            {
+                result: {
+                    ok: false,
+                    error: {
+                        code: "invalid",
+                        message: "Invalid",
+                        details: {},
+                    },
+                } as const,
+                status: 400,
+            },
+            {
+                result: {
+                    ok: false,
+                    error: {
+                        code: "missing",
+                        message: "Missing",
+                        details: {},
+                    },
+                    status: 404,
+                } as const,
+                status: 404,
+            },
+        ];
+        for (const testCase of cases) {
+            const response = await executeRoute(
+                defineRoute({
+                    contract,
+                    handler: () => testCase.result,
+                }),
+                request,
+                {},
+            );
+            expect(response.status).toBe(testCase.status);
+            expect(await response.json()).not.toHaveProperty("status");
+        }
+    });
+
+    test("keeps validation failures behind the safe 500 response", async () => {
+        const contract = defineHttpContract({
+            id: "invalid-output",
+            method: "GET",
+            path: "/invalid",
+            input: objectSchema,
+            output: objectSchema,
+            error: objectSchema,
+        });
+        const response = await executeRoute(
+            defineRoute({
+                contract,
+                handler: () => ({
+                    ok: true,
+                    data: "invalid" as unknown as Record<string, unknown>,
+                }),
+            }),
+            new Request("https://example.test/invalid"),
+            {},
+        );
+        expect(response.status).toBe(500);
+        expect(await response.json()).toEqual({
+            ok: false,
+            error: {
+                code: "internal-error",
+                message: "Internal server error",
+            },
+        });
+    });
+
     test("provides health and SSE responses", async () => {
         const health = healthResponse(
             "test",

@@ -45,7 +45,8 @@ function mergePolicy(
 /**
  * Dispatches supported Discord interactions through a validated static registry.
  *
- * Handler and defer failures are delivered to the configured error boundary.
+ * Handler and defer failures are delivered to the configured error boundary,
+ * or rethrown when no boundary is configured.
  */
 export class CommandDispatcher<TClient extends Client> {
     readonly tracker: OperationTracker;
@@ -172,7 +173,8 @@ export class CommandDispatcher<TClient extends Client> {
         try {
             await this.tracker.run(command.id, policy.timeoutMs, operation);
         } catch (error) {
-            await this.options.onError?.(error, {
+            if (!this.options.onError) throw error;
+            await this.options.onError(error, {
                 phase,
                 id: command.id,
                 interaction,

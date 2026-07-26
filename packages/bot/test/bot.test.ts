@@ -17,6 +17,7 @@ import {
     checkBotRegistry,
     createBotRegistry,
     DiscordBot,
+    defineGuildCommand,
     generateBotRegistry,
     RegistryValidationError,
 } from "../src/index.ts";
@@ -49,6 +50,39 @@ const subcommand = (execute: () => void = () => {}): BotCommand => ({
 });
 
 describe("command registry", () => {
+    test("defines guild commands with object-style execute arguments", async () => {
+        const client = {} as Client;
+        const interaction = {
+            guild: {},
+            guildId: "guild",
+        } as unknown as ChatInputCommandInteraction & {
+            guild: NonNullable<ChatInputCommandInteraction["guild"]>;
+            guildId: string;
+        };
+        const signal = new AbortController().signal;
+        let received:
+            | {
+                  client: Client;
+                  interaction: ChatInputCommandInteraction;
+                  signal: AbortSignal;
+              }
+            | undefined;
+        const command = defineGuildCommand({
+            id: "play",
+            builder: new SlashCommandBuilder()
+                .setName("play")
+                .setDescription("Play music"),
+            execute: (arguments_) => {
+                received = arguments_;
+            },
+        });
+
+        await command.execute?.(client, interaction, { signal });
+        expect(command.kind).toBe("chat-input");
+        expect(command.guildOnly).toBe(true);
+        expect(received).toEqual({ client, interaction, signal });
+    });
+
     test("composes subcommands and application command JSON", () => {
         const registry = createBotRegistry([rootCommand(), subcommand()]);
         expect(registry.executableCommands.has("queue/remove")).toBe(true);
@@ -293,6 +327,86 @@ describe("dispatcher", () => {
             commandId: "queue",
         });
         expect(executed).toBe(false);
+    });
+
+    test("rethrows handler failures without an error boundary", async () => {
+        const failure = new Error("command failed");
+        const registry = createBotRegistry([
+            {
+                kind: "chat-input",
+                id: "queue",
+                builder: new SlashCommandBuilder()
+                    .setName("queue")
+                    .setDescription("Manage the queue"),
+                execute: () => {
+                    throw failure;
+                },
+            },
+        ]);
+        const dispatcher = new CommandDispatcher({
+            client: {} as Client,
+            registry,
+        });
+        const interaction = {
+            commandName: "queue",
+            deferred: false,
+            replied: false,
+            isAutocomplete: () => false,
+            isChatInputCommand: () => true,
+            isContextMenuCommand: () => false,
+            isRepliable: () => true,
+            inCachedGuild: () => true,
+            options: {
+                getSubcommandGroup: () => null,
+                getSubcommand: () => null,
+            },
+        } as unknown as ChatInputCommandInteraction;
+
+        await expect(dispatcher.dispatch(interaction)).rejects.toBe(failure);
+    });
+
+    test("reports handler failures once when an error boundary exists", async () => {
+        const failure = new Error("command failed");
+        const errors: unknown[] = [];
+        const registry = createBotRegistry([
+            {
+                kind: "chat-input",
+                id: "queue",
+                builder: new SlashCommandBuilder()
+                    .setName("queue")
+                    .setDescription("Manage the queue"),
+                execute: () => {
+                    throw failure;
+                },
+            },
+        ]);
+        const dispatcher = new CommandDispatcher({
+            client: {} as Client,
+            registry,
+            onError: (error) => {
+                errors.push(error);
+            },
+        });
+        const interaction = {
+            commandName: "queue",
+            deferred: false,
+            replied: false,
+            isAutocomplete: () => false,
+            isChatInputCommand: () => true,
+            isContextMenuCommand: () => false,
+            isRepliable: () => true,
+            inCachedGuild: () => true,
+            options: {
+                getSubcommandGroup: () => null,
+                getSubcommand: () => null,
+            },
+        } as unknown as ChatInputCommandInteraction;
+
+        await expect(dispatcher.dispatch(interaction)).resolves.toEqual({
+            handled: true,
+            commandId: "queue",
+        });
+        expect(errors).toEqual([failure]);
     });
 
     test("reports timeout and aborts the handler signal", async () => {

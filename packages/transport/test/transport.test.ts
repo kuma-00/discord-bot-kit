@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+    createEventRegistry,
     defineEventContract,
     defineHttpContract,
 } from "@kuma-00/bot-kit-contracts";
@@ -162,5 +163,170 @@ describe("SSE", () => {
         });
         await subscription.start();
         expect(received).toEqual(["ok"]);
+    });
+
+    test("drops one invalid event and continues the same stream", async () => {
+        const payload = schema<{ value: string }>(
+            (value): value is { value: string } =>
+                typeof value === "object" &&
+                value !== null &&
+                typeof (value as { value?: unknown }).value === "string",
+        );
+        const contract = defineEventContract({
+            type: "Updated",
+            version: 1,
+            payload,
+        });
+        const envelope = (id: string, value: string) =>
+            JSON.stringify({
+                id,
+                type: "Updated",
+                version: 1,
+                occurredAt: "now",
+                payload: { value },
+            });
+        const received: string[] = [];
+        const errors: unknown[] = [];
+        let fetches = 0;
+        let subscription: SseSubscription<"Updated", 1, typeof payload>;
+        subscription = new SseSubscription({
+            url: "https://example.test/events",
+            contract,
+            fetch: async () => {
+                fetches++;
+                return new Response(
+                    `data: ${envelope("a", "A")}\n\ndata: invalid\n\ndata: ${envelope("b", "B")}\n\n`,
+                );
+            },
+            onEvent: (event) => {
+                received.push(event.payload.value);
+                if (received.length === 2) subscription.stop();
+            },
+            onEventError: (error) => {
+                errors.push(error);
+            },
+        });
+
+        await subscription.start();
+        expect(received).toEqual(["A", "B"]);
+        expect(errors).toHaveLength(1);
+        expect(fetches).toBe(1);
+    });
+
+    test("validates multiple event contracts and narrows by type", async () => {
+        const textPayload = schema<{ value: string }>(
+            (value): value is { value: string } =>
+                typeof value === "object" &&
+                value !== null &&
+                typeof (value as { value?: unknown }).value === "string",
+        );
+        const countPayload = schema<{ count: number }>(
+            (value): value is { count: number } =>
+                typeof value === "object" &&
+                value !== null &&
+                typeof (value as { count?: unknown }).count === "number",
+        );
+        const contracts = createEventRegistry([
+            defineEventContract({
+                type: "player.updated",
+                version: 1,
+                payload: textPayload,
+            }),
+            defineEventContract({
+                type: "queue.updated",
+                version: 2,
+                payload: countPayload,
+            }),
+        ]);
+        const values: Array<string | number> = [];
+        const errors: unknown[] = [];
+        let subscription: SseSubscription<
+            string,
+            number,
+            typeof textPayload,
+            typeof contracts.contracts
+        >;
+        subscription = new SseSubscription({
+            url: "https://example.test/events",
+            contracts,
+            fetch: async () =>
+                new Response(
+                    [
+                        {
+                            id: "1",
+                            type: "player.updated",
+                            version: 1,
+                            occurredAt: "now",
+                            payload: { value: "playing" },
+                        },
+                        {
+                            id: "2",
+                            type: "unknown",
+                            version: 1,
+                            occurredAt: "now",
+                            payload: {},
+                        },
+                        {
+                            id: "3",
+                            type: "queue.updated",
+                            version: 2,
+                            occurredAt: "now",
+                            payload: { count: 3 },
+                        },
+                    ]
+                        .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+                        .join(""),
+                ),
+            onEvent: (event) => {
+                if (event.type === "player.updated") {
+                    values.push(event.payload.value);
+                } else if (event.type === "queue.updated") {
+                    values.push(event.payload.count);
+                }
+                if (values.length === 2) subscription.stop();
+            },
+            onEventError: (error) => {
+                errors.push(error);
+            },
+        });
+
+        await subscription.start();
+        expect(values).toEqual(["playing", 3]);
+        expect(errors).toHaveLength(1);
+    });
+
+    test("applies bounded jittered backoff and resets after opening", async () => {
+        const payload = schema<{ value: string }>(
+            (value): value is { value: string } =>
+                typeof value === "object" && value !== null,
+        );
+        const contract = defineEventContract({
+            type: "Updated",
+            version: 1,
+            payload,
+        });
+        const delays: number[] = [];
+        let attempt = 0;
+        let subscription: SseSubscription<"Updated", 1, typeof payload>;
+        subscription = new SseSubscription({
+            url: "https://example.test/events",
+            contract,
+            minRetryMs: 100,
+            maxRetryMs: 200,
+            random: () => 0.5,
+            waitForRetry: async (delay) => {
+                delays.push(delay);
+                if (delays.length === 4) subscription.stop();
+            },
+            fetch: async () => {
+                attempt++;
+                if (attempt === 3) return new Response("");
+                throw new Error("offline");
+            },
+            onEvent: () => {},
+        });
+
+        await subscription.start();
+        expect(delays).toEqual([50, 100, 50, 100]);
     });
 });

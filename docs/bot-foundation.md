@@ -36,6 +36,12 @@ directory scanやdynamic importは行いません。
 - defer、ephemeral、timeoutはbot既定またはCommand単位で明示した場合だけ有効です。
 - timeout有効時はhandlerへ`AbortSignal`を渡します。
 - handler例外は注入可能なerror boundaryへ渡し、bot-kit自身は返信内容を決めません。
+- `CommandDispatcher`単体利用でerror boundaryを省略した場合、handler例外は
+  `dispatch()`から再throwします。`DiscordBot`は常に内部boundaryを設定します。
+
+`defineCommand`は判別Unionを直接定義するlow-level APIです。単純なtop-level
+chat-input commandには`defineGlobalCommand`と`defineGuildCommand`も使用でき、
+`execute`は`{ client, interaction, signal }`のobject引数を受け取ります。
 
 ## Lifecycle
 

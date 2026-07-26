@@ -8,8 +8,10 @@ Discord Bot、Backend、Frontend間で再利用できるBun向けTypeScriptラ�
 | --- | --- |
 | `@kuma-00/bot-kit-config` | YAML・環境変数・overrideの読み込みと検証 |
 | `@kuma-00/bot-kit-contracts` | HTTP・イベントの実行時契約 |
+| `@kuma-00/bot-kit-registry` | 静的module discoveryとreadonly registry生成 |
 | `@kuma-00/bot-kit-transport` | 型付きFetch clientとSSE購読 |
 | `@kuma-00/bot-kit-bot` | Discord.js Client、Command/Event Registry、lifecycle |
+| `@kuma-00/bot-kit-voice` | Discord Voice接続、復旧、cleanup |
 | `@kuma-00/bot-kit-backend` | framework-neutralなroute、認証、SSE broker |
 | `@kuma-00/bot-kit-elysia` | Backend coreのElysia adapter |
 | `@kuma-00/bot-kit-frontend` | UI非依存のAPI・realtime状態 |
@@ -55,8 +57,9 @@ Release PRをmergeすると、`vX.Y.Z`タグとGitHub Releaseを作成し、全�
 - [設定](docs/configuration.md)
 - [通信](docs/communication.md)
 - [Bot基盤](docs/bot-foundation.md)
+- [Public API](docs/public-api.md)
 - [初期設計ADR](docs/decisions/0001-initial-architecture.md)
 
 ## Status
 
-v0.1.0ではライブラリ、自動テスト、JSRへの自動公開を提供します。既存Botの移植、Exampleアプリ、WebSocketは含みません。
+現在はライブラリ、自動テスト、JSRへの自動公開を提供しています。既存Botの移植、Exampleアプリ、WebSocketは含みません。
