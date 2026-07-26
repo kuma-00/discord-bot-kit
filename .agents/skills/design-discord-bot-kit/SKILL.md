@@ -48,6 +48,9 @@ formatting changes, validate the generated release-style `jsr.json` files
 instead of checking only the pre-release working tree.
 Keep `include-component-in-tag: false` so Release Please emits `vX.Y.Z`; the
 publish script and manual retry input use that component-free tag format.
+Publish JSR packages in a deterministic topological order derived from their
+`workspace:` dependencies. Reject unknown workspace dependencies and cycles;
+do not fall back to directory or package-name order.
 
 ## Package Placement
 

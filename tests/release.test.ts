@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import {
+    loadReleasePackages,
+    orderReleasePackages,
+    type ReleasePackage,
+} from "../scripts/release-packages";
 
 interface PackageManifest {
     readonly version: string;
@@ -23,6 +28,24 @@ interface ReleasePleaseConfig {
 }
 
 const repositoryDirectory = join(import.meta.dir, "..");
+
+function releasePackage(
+    name: string,
+    dependencies: Readonly<Record<string, string>> = {},
+): ReleasePackage {
+    const manifest = {
+        name,
+        version: "0.0.0",
+        license: "MIT",
+        dependencies,
+    };
+    return {
+        directoryName: name,
+        directory: name,
+        packageManifest: manifest,
+        jsrManifest: manifest,
+    };
+}
 
 describe("release configuration", () => {
     test("keeps every package manifest on the root release version and MIT license", async () => {
@@ -79,5 +102,45 @@ describe("release configuration", () => {
                     type === "json" && jsonpath === "$.version",
             ),
         ).toBe(true);
+    });
+
+    test("publishes workspace dependencies before their consumers", async () => {
+        const orderedPackages = await loadReleasePackages(
+            join(repositoryDirectory, "packages"),
+        );
+
+        expect(
+            orderedPackages.map(({ directoryName }) => directoryName),
+        ).toEqual([
+            "config",
+            "contracts",
+            "backend",
+            "elysia",
+            "registry",
+            "bot",
+            "transport",
+            "frontend",
+            "svelte",
+            "voice",
+        ]);
+    });
+
+    test("rejects invalid workspace dependency graphs", () => {
+        const first = "@kuma-00/bot-kit-first";
+        const second = "@kuma-00/bot-kit-second";
+
+        expect(() =>
+            orderReleasePackages([
+                releasePackage(first, {
+                    "@kuma-00/bot-kit-missing": "workspace:*",
+                }),
+            ]),
+        ).toThrow("unknown workspace dependency");
+        expect(() =>
+            orderReleasePackages([
+                releasePackage(first, { [second]: "workspace:*" }),
+                releasePackage(second, { [first]: "workspace:*" }),
+            ]),
+        ).toThrow("Workspace dependency cycle");
     });
 });

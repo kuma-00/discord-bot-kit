@@ -1,11 +1,5 @@
-import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-
-interface PackageManifest {
-    readonly name: string;
-    readonly version: string;
-    readonly license?: string;
-}
+import { loadReleasePackages, type PackageManifest } from "./release-packages";
 
 interface ReleaseManifest {
     readonly [path: string]: string;
@@ -42,20 +36,11 @@ if (releaseManifest["."] !== expectedVersion) {
     );
 }
 
-const packageNames = (await readdir(packagesDirectory)).sort();
-
-for (const packageDirectoryName of packageNames) {
-    const cwd = join(packagesDirectory, packageDirectoryName);
-    const jsrManifestPath = join(cwd, "jsr.json");
-    if (!(await Bun.file(jsrManifestPath).exists())) continue;
-
-    const packageManifest = (await Bun.file(
-        join(cwd, "package.json"),
-    ).json()) as PackageManifest;
-    const jsrManifest = (await Bun.file(
-        jsrManifestPath,
-    ).json()) as PackageManifest;
-
+for (const {
+    directory: cwd,
+    packageManifest,
+    jsrManifest,
+} of await loadReleasePackages(packagesDirectory)) {
     if (
         packageManifest.version !== expectedVersion ||
         jsrManifest.version !== expectedVersion
