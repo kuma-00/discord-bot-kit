@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maximize JSR Score"
+  short_description: "Audit and raise JSR package scores to 100%"
+  default_prompt: "Use $maximize-jsr-score to audit these JSR packages and raise their score to 100%."
