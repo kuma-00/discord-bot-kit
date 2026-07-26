@@ -9,6 +9,7 @@ import {
     ContextMenuCommandBuilder,
     SlashCommandBuilder,
 } from "discord.js";
+import { OperationTracker } from "../src/execution.ts";
 import {
     type BotCommand,
     buildBotRegistryModule,
@@ -153,6 +154,21 @@ describe("command registry", () => {
         );
         expect(registry.events).toHaveLength(2);
     });
+
+    test("does not mutate command builders while composing registries", () => {
+        const root = rootCommand();
+        const child = subcommand();
+        const first = createBotRegistry([root, child]);
+        const second = createBotRegistry([root, child]);
+
+        expect(first.applicationCommands).toEqual(second.applicationCommands);
+        if (root.kind !== "chat-input") {
+            throw new Error("Expected a chat-input root");
+        }
+        expect(
+            (root.builder.toJSON() as { options?: unknown[] }).options,
+        ).toHaveLength(0);
+    });
 });
 
 describe("dispatcher", () => {
@@ -290,6 +306,64 @@ describe("dispatcher", () => {
             (errors[0] as { context: { timedOut: boolean } }).context.timedOut,
         ).toBe(true);
     });
+
+    test("reports defer failures through the error boundary", async () => {
+        const failure = new Error("cannot defer");
+        const errors: unknown[] = [];
+        const registry = createBotRegistry([
+            {
+                kind: "chat-input",
+                id: "queue",
+                builder: new SlashCommandBuilder()
+                    .setName("queue")
+                    .setDescription("Manage the queue"),
+                execution: { defer: true },
+                execute: () => {},
+            },
+        ]);
+        const dispatcher = new CommandDispatcher({
+            client: {} as Client,
+            registry,
+            onError: (error) => {
+                errors.push(error);
+            },
+        });
+        const interaction = {
+            commandName: "queue",
+            deferred: false,
+            replied: false,
+            isAutocomplete: () => false,
+            isChatInputCommand: () => true,
+            isContextMenuCommand: () => false,
+            isRepliable: () => true,
+            inGuild: () => true,
+            deferReply: () => Promise.reject(failure),
+            options: {
+                getSubcommandGroup: () => null,
+                getSubcommand: () => null,
+            },
+        } as unknown as ChatInputCommandInteraction;
+
+        expect(await dispatcher.dispatch(interaction)).toEqual({
+            handled: true,
+            commandId: "queue",
+        });
+        expect(errors).toEqual([failure]);
+    });
+});
+
+describe("operation tracker", () => {
+    test("rejects an invalid timeout before starting the operation", async () => {
+        const tracker = new OperationTracker();
+        let started = false;
+
+        await expect(
+            tracker.run("invalid", 0, () => {
+                started = true;
+            }),
+        ).rejects.toBeInstanceOf(RangeError);
+        expect(started).toBe(false);
+    });
 });
 
 describe("lifecycle", () => {
@@ -332,6 +406,72 @@ describe("lifecycle", () => {
             true,
         );
     });
+
+    test("waits for an in-progress start before stopping", async () => {
+        let resolveLogin!: () => void;
+        const login = new Promise<void>((resolve) => {
+            resolveLogin = resolve;
+        });
+        let destroyCount = 0;
+        const fakeClient = {
+            on: () => fakeClient,
+            once: () => fakeClient,
+            off: () => fakeClient,
+            login: async () => {
+                await login;
+                return "token";
+            },
+            destroy: () => {
+                destroyCount++;
+            },
+        } as unknown as Client;
+        const bot = new DiscordBot(createBotRegistry([]), {
+            token: "token",
+            clientOptions: { intents: [] },
+            clientFactory: () => fakeClient,
+        });
+
+        const starting = bot.start();
+        const stopping = bot.stop();
+        resolveLogin();
+        await Promise.all([starting, stopping]);
+        expect(destroyCount).toBe(1);
+    });
+
+    test("restarts after an in-progress stop completes", async () => {
+        let resolveFirstLogin!: () => void;
+        const firstLogin = new Promise<void>((resolve) => {
+            resolveFirstLogin = resolve;
+        });
+        let loginCount = 0;
+        let destroyCount = 0;
+        const fakeClient = {
+            on: () => fakeClient,
+            once: () => fakeClient,
+            off: () => fakeClient,
+            login: async () => {
+                loginCount++;
+                if (loginCount === 1) await firstLogin;
+                return "token";
+            },
+            destroy: () => {
+                destroyCount++;
+            },
+        } as unknown as Client;
+        const bot = new DiscordBot(createBotRegistry([]), {
+            token: "token",
+            clientOptions: { intents: [] },
+            clientFactory: () => fakeClient,
+        });
+
+        const initialStart = bot.start();
+        const stopping = bot.stop();
+        const restarting = bot.start();
+        resolveFirstLogin();
+        await Promise.all([initialStart, stopping, restarting]);
+        expect(loginCount).toBe(2);
+        expect(destroyCount).toBe(1);
+    });
 });
 
 describe("registry generator", () => {
@@ -344,11 +484,11 @@ describe("registry generator", () => {
         await mkdir(events);
         await Bun.write(
             join(commands, "b.ts"),
-            'export default { id: "b", kind: "chat-input", builder: {} };',
+            'export default { id: "b", kind: "chat-input", builder: { toJSON() { return { name: "b" }; } } };',
         );
         await Bun.write(
             join(commands, "a.ts"),
-            'export default { id: "a", kind: "chat-input", builder: {} };',
+            'export default { id: "a", kind: "chat-input", builder: { toJSON() { return { name: "a" }; } } };',
         );
         await Bun.write(
             join(events, "ready.ts"),
@@ -389,5 +529,71 @@ describe("registry generator", () => {
                 outputPath: join(empty, "generated.ts"),
             }),
         ).rejects.toThrow(/No runtime TypeScript modules/);
+    });
+
+    test("rejects unsupported command kinds and invalid builders", async () => {
+        const config = await fixture();
+        await Bun.write(
+            join(config.commandSourceDir, "a.ts"),
+            'export default { id: "a", kind: "unknown", builder: { toJSON() {} } };',
+        );
+        expect(buildBotRegistryModule(config)).rejects.toThrow(
+            RegistryValidationError,
+        );
+        await Bun.write(
+            join(config.commandSourceDir, "a.ts"),
+            'export default { id: "a", kind: "chat-input", builder: null };',
+        );
+        expect(buildBotRegistryModule(config)).rejects.toThrow(
+            RegistryValidationError,
+        );
+    });
+
+    test("rejects cross-module registry inconsistencies", async () => {
+        const duplicate = await fixture();
+        await Bun.write(
+            join(duplicate.commandSourceDir, "b.ts"),
+            'export default { id: "a", kind: "chat-input", builder: { toJSON() { return { name: "a" }; } } };',
+        );
+        expect(buildBotRegistryModule(duplicate)).rejects.toThrow(
+            /Duplicate command id/,
+        );
+
+        const missingParent = await fixture();
+        await Bun.write(
+            join(missingParent.commandSourceDir, "child.ts"),
+            `export default {
+                id: "remove",
+                kind: "subcommand",
+                parentId: "missing",
+                builder(builder) {
+                    return builder.setName("remove").setDescription("Remove");
+                },
+                execute() {},
+            };`,
+        );
+        expect(buildBotRegistryModule(missingParent)).rejects.toThrow(
+            /missing parent/,
+        );
+    });
+
+    test("rejects empty event identifiers and names", async () => {
+        const emptyId = await fixture();
+        await Bun.write(
+            join(emptyId.eventSourceDir, "ready.ts"),
+            'export default { id: " ", event: "ready", execute() {} };',
+        );
+        expect(buildBotRegistryModule(emptyId)).rejects.toThrow(
+            RegistryValidationError,
+        );
+
+        const emptyEvent = await fixture();
+        await Bun.write(
+            join(emptyEvent.eventSourceDir, "ready.ts"),
+            'export default { id: "ready", event: " ", execute() {} };',
+        );
+        expect(buildBotRegistryModule(emptyEvent)).rejects.toThrow(
+            RegistryValidationError,
+        );
     });
 });

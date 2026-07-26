@@ -11,6 +11,11 @@ import type {
     StaticRegistryGeneratorConfig,
 } from "./types.ts";
 
+/**
+ * Imports, validates, and renders static imports for discovered modules.
+ *
+ * Dynamic imports occur only during Bun-time generation.
+ */
 export async function buildStaticRegistryFragment(
     config: StaticRegistryGeneratorConfig,
     identifierPrefix = "registryItem",

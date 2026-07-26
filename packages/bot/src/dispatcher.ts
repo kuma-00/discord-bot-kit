@@ -13,6 +13,7 @@ import type {
     ExecutionPolicy,
 } from "./types.ts";
 
+/** Dependencies and default execution policy used by a command dispatcher. */
 export interface CommandDispatcherOptions<TClient extends Client> {
     readonly client: TClient;
     readonly registry: BotRegistry;
@@ -41,6 +42,11 @@ function mergePolicy(
     };
 }
 
+/**
+ * Dispatches supported Discord interactions through a validated static registry.
+ *
+ * Handler and defer failures are delivered to the configured error boundary.
+ */
 export class CommandDispatcher<TClient extends Client> {
     readonly tracker: OperationTracker;
 
@@ -48,6 +54,7 @@ export class CommandDispatcher<TClient extends Client> {
         this.tracker = options.tracker ?? new OperationTracker();
     }
 
+    /** Dispatches one supported interaction and reports whether it was handled. */
     async dispatch(interaction: Interaction): Promise<DispatchResult> {
         if (
             !interaction.isChatInputCommand() &&
@@ -123,17 +130,17 @@ export class CommandDispatcher<TClient extends Client> {
         }
 
         const policy = mergePolicy(this.options.execution, command.execution);
-        if (
-            policy.defer &&
-            interaction.isRepliable() &&
-            !interaction.deferred &&
-            !interaction.replied
-        ) {
-            await interaction.deferReply({
-                ephemeral: policy.ephemeral ?? false,
-            });
-        }
-        await this.execute(command, "command", interaction, (signal) => {
+        await this.execute(command, "command", interaction, async (signal) => {
+            if (
+                policy.defer &&
+                interaction.isRepliable() &&
+                !interaction.deferred &&
+                !interaction.replied
+            ) {
+                await interaction.deferReply({
+                    ephemeral: policy.ephemeral ?? false,
+                });
+            }
             const execute = command.execute as unknown as (
                 client: Client,
                 interaction: Interaction,

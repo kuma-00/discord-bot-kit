@@ -116,6 +116,61 @@ describe("VoiceConnectionController", () => {
         expect(controller.channel?.id).toBe("second");
     });
 
+    test("serializes concurrent connections to different channels", async () => {
+        const connection = new MockVoiceConnection();
+        let resolveFirst!: (connection: VoiceConnection) => void;
+        let readyCalls = 0;
+        const firstReady = new Promise<VoiceConnection>((resolve) => {
+            resolveFirst = resolve;
+        });
+        const fixture = adapter(connection, async (target, status) => {
+            if (status === VoiceConnectionStatus.Ready && readyCalls++ === 0) {
+                return firstReady;
+            }
+            return target;
+        });
+        const controller = new VoiceConnectionController({
+            adapter: fixture.value,
+        });
+
+        const first = controller.connect(channel("first"));
+        const second = controller.connect(channel("second"));
+        expect(fixture.joins.map(({ channelId }) => channelId)).toEqual([
+            "first",
+        ]);
+        resolveFirst(connection as unknown as VoiceConnection);
+        await Promise.all([first, second]);
+        expect(fixture.joins.map(({ channelId }) => channelId)).toEqual([
+            "first",
+            "second",
+        ]);
+        expect(controller.channel?.id).toBe("second");
+    });
+
+    test("cancels queued channel changes when destroyed", async () => {
+        const connection = new MockVoiceConnection();
+        const fixture = adapter(
+            connection,
+            () => new Promise<VoiceConnection>(() => {}),
+        );
+        const controller = new VoiceConnectionController({
+            adapter: fixture.value,
+        });
+
+        const first = controller.connect(channel("first"));
+        const queuedResult = controller
+            .connect(channel("second"))
+            .catch((error: unknown) => error);
+        const destroying = controller.destroy();
+        await expect(first).rejects.toBeInstanceOf(VoiceConnectionConnectError);
+        expect(await queuedResult).toBeInstanceOf(VoiceConnectionConnectError);
+        await destroying;
+        expect(fixture.joins.map(({ channelId }) => channelId)).toEqual([
+            "first",
+        ]);
+        expect(controller.state).toBe("destroyed");
+    });
+
     test("accepts natural recovery without rejoin", async () => {
         const connection = new MockVoiceConnection();
         const fixture = adapter(connection);
@@ -128,6 +183,86 @@ describe("VoiceConnectionController", () => {
         await Bun.sleep(1);
         expect(controller.state).toBe("ready");
         expect(connection.rejoinCalls).toBe(0);
+    });
+
+    test("switches channels while recovery is backing off", async () => {
+        const connection = new MockVoiceConnection();
+        let joins = 0;
+        let notifyRecoveryAttempt!: () => void;
+        let initialReady = true;
+        const recoveryAttempted = new Promise<void>((resolve) => {
+            notifyRecoveryAttempt = resolve;
+        });
+        const fixture = adapter(connection, async (target, status) => {
+            if (status === VoiceConnectionStatus.Ready && initialReady) {
+                initialReady = false;
+                return target;
+            }
+            if (joins >= 2 && status === VoiceConnectionStatus.Ready) {
+                return target;
+            }
+            throw new Error(`cannot enter ${status}`);
+        });
+        const originalJoin = fixture.value.join;
+        (
+            fixture.value as {
+                join: VoiceConnectionAdapter["join"];
+            }
+        ).join = (options) => {
+            const joined = originalJoin(options);
+            joins++;
+            return joined;
+        };
+        const controller = new VoiceConnectionController({
+            adapter: fixture.value,
+            recovery: {
+                gracePeriodMs: 1,
+                readyTimeoutMs: 1,
+                maxAttempts: 2,
+                backoffMs: 10_000,
+            },
+            onRecoveryAttempt: () => notifyRecoveryAttempt(),
+        });
+        await controller.connect(channel("first"));
+        connection.emit(VoiceConnectionStatus.Disconnected);
+        await recoveryAttempted;
+        await controller.connect(channel("second"));
+        expect(controller.state).toBe("ready");
+        expect(controller.channel?.id).toBe("second");
+    });
+
+    test("routes recovery hook failures without an unhandled rejection", async () => {
+        const connection = new MockVoiceConnection();
+        let initialReady = true;
+        const fixture = adapter(connection, async (target, status) => {
+            if (status === VoiceConnectionStatus.Ready && initialReady) {
+                initialReady = false;
+                return target;
+            }
+            throw new Error(`cannot enter ${status}`);
+        });
+        const hookFailure = new Error("recovery hook failed");
+        const errors: unknown[] = [];
+        const controller = new VoiceConnectionController({
+            adapter: fixture.value,
+            recovery: {
+                gracePeriodMs: 1,
+                readyTimeoutMs: 1,
+                maxAttempts: 1,
+            },
+            onRecoveryAttempt: () => {
+                throw hookFailure;
+            },
+            onError: (error) => {
+                errors.push(error);
+            },
+        });
+
+        await controller.connect(channel());
+        connection.emit(VoiceConnectionStatus.Disconnected);
+        await Bun.sleep(1);
+        expect(controller.state).toBe("error");
+        expect(errors).toContain(hookFailure);
     });
 
     test("bounds rejoin attempts and reports recovery failure", async () => {
@@ -162,28 +297,27 @@ describe("VoiceConnectionController", () => {
         expect(controller.state).toBe("error");
     });
 
-    test("supports aborting connect and cleans up the connection", async () => {
+    test("aborts one caller without cancelling a shared connection", async () => {
         const connection = new MockVoiceConnection();
-        const fixture = adapter(
-            connection,
-            () => new Promise<VoiceConnection>(() => {}),
-        );
+        let resolveReady!: (connection: VoiceConnection) => void;
+        const ready = new Promise<VoiceConnection>((resolve) => {
+            resolveReady = resolve;
+        });
+        const fixture = adapter(connection, () => ready);
         const controller = new VoiceConnectionController({
             adapter: fixture.value,
         });
         const abortController = new AbortController();
-        const connecting = controller.connect(channel(), {
+        const cancelled = controller.connect(channel(), {
             signal: abortController.signal,
         });
+        const shared = controller.connect(channel());
         abortController.abort(new DOMException("cancelled", "AbortError"));
-        expect(connecting).rejects.toBeInstanceOf(VoiceConnectionConnectError);
-        await connecting.catch(() => {});
-        expect(connection.destroyCalls).toBe(1);
-        expect(
-            [...connection.handlers.values()].every(
-                (handlers) => handlers.size === 0,
-            ),
-        ).toBe(true);
+        await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+        resolveReady(connection as unknown as VoiceConnection);
+        expect(await shared).toBe(connection as unknown as VoiceConnection);
+        expect(connection.destroyCalls).toBe(0);
+        expect(controller.state).toBe("ready");
     });
 
     test("disconnects and destroys idempotently", async () => {

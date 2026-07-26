@@ -7,6 +7,7 @@ import { commandKey } from "./commands.ts";
 import { RegistryValidationError } from "./errors.ts";
 import type { BotCommand, BotEvent } from "./types.ts";
 
+/** Validated command lookup tables, event handlers, and Discord REST payloads. */
 export interface BotRegistry {
     readonly definitions: readonly BotCommand[];
     readonly rootCommands: ReadonlyMap<string, BotCommand>;
@@ -39,12 +40,42 @@ function assertBuilderName(
     }
 }
 
+function appendApplicationCommandOption(
+    command: RESTPostAPIApplicationCommandsJSONBody | undefined,
+    option: unknown,
+): void {
+    if (!command) {
+        throw new RegistryValidationError(
+            "invalid-parent",
+            "Parent application command payload is missing",
+        );
+    }
+    const mutableCommand = command as unknown as {
+        options?: unknown[];
+    };
+    const options = mutableCommand.options ?? [];
+    mutableCommand.options = options;
+    options.push(option);
+}
+
+/**
+ * Validates and composes static command and event definitions.
+ *
+ * Command builders remain consumer-owned and are not mutated; composition is
+ * applied to Registry-owned REST payloads.
+ *
+ * @throws {RegistryValidationError} For duplicates, invalid parents, or builder mismatches.
+ */
 export function createBotRegistry(
     definitions: readonly BotCommand[],
     events: readonly BotEvent[] = [],
 ): BotRegistry {
     const byKey = new Map<string, BotCommand>();
     const roots = new Map<string, BotCommand>();
+    const applicationCommandById = new Map<
+        string,
+        RESTPostAPIApplicationCommandsJSONBody
+    >();
     for (const command of definitions) {
         const key = commandKey(command);
         normalizedId(command.id, "Command");
@@ -64,7 +95,9 @@ export function createBotRegistry(
                 );
             }
             roots.set(id, command);
-            assertBuilderName(command, command.builder.toJSON().name);
+            const commandJson = command.builder.toJSON();
+            assertBuilderName(command, commandJson.name);
+            applicationCommandById.set(id, commandJson);
         }
     }
 
@@ -121,14 +154,21 @@ export function createBotRegistry(
             }
             group.builder.addSubcommand(builder);
         } else {
-            parent.builder.addSubcommand(builder);
+            appendApplicationCommandOption(
+                applicationCommandById.get(parentId),
+                builder.toJSON(),
+            );
         }
     }
     for (const [key, group] of groups) {
         const parentId = key.split("/")[0];
-        const parent = parentId ? roots.get(parentId) : undefined;
+        if (!parentId) continue;
+        const parent = roots.get(parentId);
         if (parent?.kind === "chat-input") {
-            parent.builder.addSubcommandGroup(group.builder);
+            appendApplicationCommandOption(
+                applicationCommandById.get(parentId),
+                group.builder.toJSON(),
+            );
         }
     }
 
@@ -149,17 +189,6 @@ export function createBotRegistry(
         rootCommands: roots,
         executableCommands: byKey,
         events: [...events],
-        applicationCommands: [...roots.values()].map((command) => {
-            if (
-                command.kind !== "chat-input" &&
-                command.kind !== "context-menu"
-            ) {
-                throw new RegistryValidationError(
-                    "invalid-parent",
-                    "Root registry contains a non-root command",
-                );
-            }
-            return command.builder.toJSON();
-        }),
+        applicationCommands: [...applicationCommandById.values()],
     };
 }

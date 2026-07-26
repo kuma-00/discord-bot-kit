@@ -1,3 +1,4 @@
+/** Returns the configured abort reason or a standard AbortError fallback. */
 export function abortError(signal: AbortSignal): unknown {
     return (
         signal.reason ??
@@ -5,6 +6,7 @@ export function abortError(signal: AbortSignal): unknown {
     );
 }
 
+/** Races a promise against a caller-owned signal without cancelling the promise. */
 export async function withAbort<T>(
     promise: Promise<T>,
     signal: AbortSignal | undefined,
@@ -24,6 +26,7 @@ export async function withAbort<T>(
     }
 }
 
+/** Waits for a duration and clears its timer when the signal aborts. */
 export function abortableDelay(
     milliseconds: number,
     signal: AbortSignal,

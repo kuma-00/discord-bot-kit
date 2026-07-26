@@ -15,12 +15,19 @@ type RegisteredListener = {
     readonly listener: (...args: never[]) => void;
 };
 
+/**
+ * Owns a Discord client, its registered handlers, and active executions.
+ *
+ * Concurrent starts share one login. A start requested during stop waits for
+ * shutdown and then starts again.
+ */
 export class DiscordBot<TClient extends Client = Client> {
     readonly client: TClient;
     readonly dispatcher: CommandDispatcher<TClient>;
     private readonly tracker = new OperationTracker();
     private readonly listeners: RegisteredListener[] = [];
     private startPromise: Promise<TClient> | undefined;
+    private stopPromise: Promise<void> | undefined;
     private started = false;
     private registered = false;
 
@@ -41,7 +48,11 @@ export class DiscordBot<TClient extends Client = Client> {
         });
     }
 
+    /** Registers handlers and logs in, coalescing concurrent start requests. */
     start(): Promise<TClient> {
+        if (this.stopPromise) {
+            return this.stopPromise.then(() => this.start());
+        }
         if (this.started) return Promise.resolve(this.client);
         if (this.startPromise) return this.startPromise;
         this.startPromise = this.startInternal().finally(() => {
@@ -50,11 +61,21 @@ export class DiscordBot<TClient extends Client = Client> {
         return this.startPromise;
     }
 
-    async stop(): Promise<void> {
+    /** Removes handlers, settles active work, and destroys the client once. */
+    stop(): Promise<void> {
+        if (this.stopPromise) return this.stopPromise;
+        this.stopPromise = this.stopInternal().finally(() => {
+            this.stopPromise = undefined;
+        });
+        return this.stopPromise;
+    }
+
+    private async stopInternal(): Promise<void> {
         this.unregisterHandlers();
         await this.tracker.abortAndSettle(
             new DOMException("Discord bot stopped", "AbortError"),
         );
+        await this.startPromise?.catch(() => {});
         if (!this.started) return;
         try {
             this.client.destroy();
@@ -160,6 +181,7 @@ export class DiscordBot<TClient extends Client = Client> {
     }
 }
 
+/** Creates a lifecycle-managed Discord bot for a validated registry. */
 export function createDiscordBot<TClient extends Client = Client>(
     registry: BotRegistry,
     options: DiscordBotRuntimeOptions<TClient>,

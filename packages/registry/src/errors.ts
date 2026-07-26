@@ -1,3 +1,4 @@
+/** Coded failure raised during static registry discovery or generation. */
 export class StaticRegistryError extends Error {
     constructor(
         readonly code:

@@ -1,6 +1,7 @@
 import { dirname, relative, resolve, sep } from "node:path";
 import { StaticRegistryError } from "./errors.ts";
 
+/** Validates a generated JavaScript identifier used in emitted source. */
 export function assertIdentifier(value: string, label: string): void {
     if (!/^[A-Za-z_$][\w$]*$/.test(value)) {
         throw new StaticRegistryError(
@@ -19,6 +20,11 @@ function isRuntimeModule(path: string): boolean {
     );
 }
 
+/**
+ * Discovers sorted runtime TypeScript modules for generation.
+ *
+ * Tests, declarations, and the generated output itself are excluded.
+ */
 export async function discoverRegistryFiles(
     sourceDir: string,
     outputPath: string,
@@ -42,6 +48,7 @@ export async function discoverRegistryFiles(
     return files;
 }
 
+/** Returns a portable relative import specifier from output to source module. */
 export function registryModuleImportPath(
     outputPath: string,
     modulePath: string,

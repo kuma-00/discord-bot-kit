@@ -5,7 +5,7 @@ import {
 } from "@discordjs/voice";
 import type { VoiceBasedChannel } from "discord.js";
 import { defaultVoiceConnectionAdapter } from "./adapter.ts";
-import { abortableDelay, abortError, withAbort } from "./async.ts";
+import { abortableDelay, withAbort } from "./async.ts";
 import {
     VoiceConnectionConnectError,
     VoiceConnectionRecoveryError,
@@ -16,12 +16,21 @@ import type {
     VoiceConnectionState,
 } from "./types.ts";
 
+/**
+ * Owns one guild voice connection with bounded recovery and cleanup.
+ *
+ * Same-target connects share work while each caller retains independent
+ * cancellation. Channel changes are serialized and cancelled by disconnect or
+ * destroy.
+ */
 export class VoiceConnectionController {
     private _state: VoiceConnectionState = "idle";
     private _channel: VoiceBasedChannel | undefined;
     private _connection: VoiceConnection | undefined;
     private connectPromise: Promise<VoiceConnection> | undefined;
+    private connectTarget: string | undefined;
     private connectController: AbortController | undefined;
+    private connectionGeneration = 0;
     private recoveryPromise: Promise<void> | undefined;
     private recoveryController: AbortController | undefined;
     private explicitDisconnect = false;
@@ -29,9 +38,24 @@ export class VoiceConnectionController {
     private readonly handleDisconnected = () => {
         if (this.explicitDisconnect || this._state === "destroyed") return;
         if (!this.recoveryPromise) {
-            this.recoveryPromise = this.recover().finally(() => {
-                this.recoveryPromise = undefined;
-            });
+            this.recoveryPromise = this.recover()
+                .catch((error) => {
+                    if (
+                        this.explicitDisconnect ||
+                        this._state === "destroyed"
+                    ) {
+                        return;
+                    }
+                    try {
+                        this.setState("error");
+                    } catch (stateError) {
+                        this.reportError(stateError);
+                    }
+                    this.reportError(error);
+                })
+                .finally(() => {
+                    this.recoveryPromise = undefined;
+                });
         }
     };
     private readonly handleConnectionStateChange = (
@@ -52,18 +76,26 @@ export class VoiceConnectionController {
         this.adapter = options.adapter ?? defaultVoiceConnectionAdapter;
     }
 
+    /** Current controller lifecycle state. */
     get state(): VoiceConnectionState {
         return this._state;
     }
 
+    /** Channel currently owned by the controller, if connected. */
     get channel(): VoiceBasedChannel | undefined {
         return this._channel;
     }
 
+    /** Underlying voice connection currently owned by the controller. */
     get connection(): VoiceConnection | undefined {
         return this._connection;
     }
 
+    /**
+     * Connects to a channel and waits for Ready.
+     *
+     * Caller cancellation does not cancel shared same-target work.
+     */
     connect(
         channel: VoiceBasedChannel,
         options: { readonly signal?: AbortSignal } = {},
@@ -81,36 +113,52 @@ export class VoiceConnectionController {
             this._channel?.id === channel.id &&
             this._connection
         ) {
-            return Promise.resolve(this._connection);
+            return withAbort(Promise.resolve(this._connection), options.signal);
         }
-        if (this.connectPromise) return this.connectPromise;
+        const target = `${channel.guild.id}:${channel.id}`;
+        if (this.connectPromise) {
+            if (this.connectTarget === target) {
+                return withAbort(this.connectPromise, options.signal);
+            }
+            const generation = this.connectionGeneration;
+            const connectAfterCurrent = () => {
+                if (
+                    generation !== this.connectionGeneration ||
+                    options.signal?.aborted ||
+                    this._state === "destroyed"
+                ) {
+                    throw new VoiceConnectionConnectError(
+                        "Voice connection request was cancelled",
+                        options.signal?.reason,
+                    );
+                }
+                return this.connect(channel, options);
+            };
+            return withAbort(
+                this.connectPromise.then(
+                    connectAfterCurrent,
+                    connectAfterCurrent,
+                ),
+                options.signal,
+            );
+        }
         const controller = new AbortController();
         this.connectController = controller;
-        const externalSignal = options.signal;
-        const forwardAbort = () =>
-            controller.abort(
-                externalSignal ? abortError(externalSignal) : undefined,
-            );
-        if (externalSignal?.aborted) {
-            forwardAbort();
-        } else {
-            externalSignal?.addEventListener("abort", forwardAbort, {
-                once: true,
-            });
-        }
+        this.connectTarget = target;
         this.connectPromise = this.connectInternal(
             channel,
             controller.signal,
         ).finally(() => {
-            externalSignal?.removeEventListener("abort", forwardAbort);
             this.connectPromise = undefined;
+            this.connectTarget = undefined;
             if (this.connectController === controller) {
                 this.connectController = undefined;
             }
         });
-        return this.connectPromise;
+        return withAbort(this.connectPromise, options.signal);
     }
 
+    /** Cancels pending work, removes listeners, and destroys the connection. */
     async disconnect(): Promise<void> {
         if (
             this._state === "idle" ||
@@ -119,6 +167,7 @@ export class VoiceConnectionController {
         ) {
             return;
         }
+        this.connectionGeneration++;
         this.explicitDisconnect = true;
         this.connectController?.abort(
             new DOMException("Voice connection disconnected", "AbortError"),
@@ -137,6 +186,7 @@ export class VoiceConnectionController {
         await this.recoveryPromise?.catch(() => {});
     }
 
+    /** Permanently disconnects the controller; later connects are rejected. */
     async destroy(): Promise<void> {
         if (this._state === "destroyed") return;
         await this.disconnect();
@@ -184,7 +234,7 @@ export class VoiceConnectionController {
                           "Voice connection failed",
                           error,
                       );
-            this.options.onError?.(wrapped);
+            this.reportError(wrapped);
             throw wrapped;
         }
     }
@@ -249,7 +299,17 @@ export class VoiceConnectionController {
             } catch (error) {
                 lastError = error;
                 if (attempt < maxAttempts) {
-                    await abortableDelay(backoffMs, controller.signal);
+                    try {
+                        await abortableDelay(backoffMs, controller.signal);
+                    } catch (delayError) {
+                        if (
+                            controller.signal.aborted ||
+                            this.explicitDisconnect
+                        ) {
+                            return;
+                        }
+                        lastError = delayError;
+                    }
                 }
             }
         }
@@ -258,7 +318,7 @@ export class VoiceConnectionController {
         const error = new VoiceConnectionRecoveryError(maxAttempts, lastError);
         this.setState("error");
         this.options.onRecoveryFailed?.(error, connection);
-        this.options.onError?.(error);
+        this.reportError(error);
     }
 
     private waitForReady(
@@ -297,5 +357,13 @@ export class VoiceConnectionController {
         const previous = this._state;
         this._state = state;
         this.options.onStateChange?.(state, previous);
+    }
+
+    private reportError(error: unknown): void {
+        try {
+            this.options.onError?.(error);
+        } catch {
+            // Error reporting must not create an unhandled lifecycle rejection.
+        }
     }
 }

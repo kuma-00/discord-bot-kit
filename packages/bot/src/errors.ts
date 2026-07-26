@@ -1,3 +1,4 @@
+/** Reports an invalid command or event registry definition. */
 export class RegistryValidationError extends Error {
     constructor(
         readonly code:
@@ -15,6 +16,7 @@ export class RegistryValidationError extends Error {
     }
 }
 
+/** Reports that a command or event exceeded its configured execution timeout. */
 export class ExecutionTimeoutError extends Error {
     constructor(
         readonly operationId: string,

@@ -1,11 +1,13 @@
 import type { BotCommand } from "./types.ts";
 
+/** Preserves the concrete type of a statically declared bot command. */
 export function defineCommand<const TCommand extends BotCommand>(
     command: TCommand,
 ): TCommand {
     return command;
 }
 
+/** Returns the normalized registry path used to dispatch a command. */
 export function commandKey(command: BotCommand): string {
     const id = command.id.trim().toLowerCase();
     if (command.kind === "subcommand") {
