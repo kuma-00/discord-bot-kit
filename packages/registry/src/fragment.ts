@@ -21,10 +21,16 @@ export async function buildStaticRegistryFragment(
     identifierPrefix = "registryItem",
 ): Promise<StaticRegistryFragment> {
     assertIdentifier(config.exportName, "exportName");
-    assertIdentifier(identifierPrefix, "identifierPrefix");
+    assertIdentifier(`${identifierPrefix}0`, "identifierPrefix");
     const moduleExport = config.moduleExport ?? "default";
-    if (moduleExport !== "default") {
-        assertIdentifier(moduleExport, "moduleExport");
+    if (
+        moduleExport !== "default" &&
+        !/^[A-Za-z_$][\w$]*$/.test(moduleExport)
+    ) {
+        throw new StaticRegistryError(
+            "invalid-export-name",
+            `moduleExport must be a valid JavaScript identifier: ${moduleExport}`,
+        );
     }
     const outputPath = resolve(config.outputPath);
     const files = await discoverRegistryFiles(config.sourceDir, outputPath);

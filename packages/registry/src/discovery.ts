@@ -1,9 +1,63 @@
 import { dirname, relative, resolve, sep } from "node:path";
 import { StaticRegistryError } from "./errors.ts";
 
+const RESERVED_BINDING_IDENTIFIERS = new Set([
+    "arguments",
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "eval",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "instanceof",
+    "interface",
+    "let",
+    "new",
+    "null",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "static",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+]);
+
 /** Validates a generated JavaScript identifier used in emitted source. */
 export function assertIdentifier(value: string, label: string): void {
-    if (!/^[A-Za-z_$][\w$]*$/.test(value)) {
+    if (
+        !/^[A-Za-z_$][\w$]*$/.test(value) ||
+        RESERVED_BINDING_IDENTIFIERS.has(value)
+    ) {
         throw new StaticRegistryError(
             "invalid-export-name",
             `${label} must be a valid JavaScript identifier: ${value}`,

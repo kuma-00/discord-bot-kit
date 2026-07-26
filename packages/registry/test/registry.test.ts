@@ -65,6 +65,17 @@ describe("static registry generator", () => {
         expect(built.content).toContain("import { minigame as registryItem0 }");
     });
 
+    test("rejects reserved export binding names", async () => {
+        const config = await fixture();
+        for (const exportName of ["default", "class", "await", "arguments"]) {
+            expect(
+                buildStaticRegistryModule({ ...config, exportName }),
+            ).rejects.toMatchObject({
+                code: "invalid-export-name",
+            });
+        }
+    });
+
     test("generates files and detects stale content", async () => {
         const config = await fixture();
         expect((await generateStaticRegistry(config)).changed).toBe(true);
