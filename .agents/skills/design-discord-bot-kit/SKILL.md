@@ -47,8 +47,10 @@ Use the existing responsibilities:
 
 - `config`: source merging and configuration validation
 - `contracts`: framework-neutral runtime contracts and envelopes
+- `registry`: Bun-time static module discovery and readonly registry generation
 - `transport`: Fetch and SSE client behavior
-- `bot`: Discord.js lifecycle and static registries
+- `bot`: Discord.js lifecycle, command/event composition, and dispatch
+- `voice`: Discord voice transport lifecycle and bounded reconnect behavior
 - `backend`: Request/Response routes, auth, errors, and SSE broker
 - `elysia`: Elysia adapter only
 - `frontend`: UI-neutral client and observable state
@@ -56,6 +58,42 @@ Use the existing responsibilities:
 
 Create a new package only when the responsibility would otherwise force an
 unrelated dependency or framework into an existing package.
+
+## Registry and Voice Patterns
+
+- Put reusable module discovery in `registry`, not `bot`. Generate sorted
+  static imports and readonly arrays; keep lookup maps, duplicate policy, and
+  entry lifecycle in the consumer.
+- Allow registry sources to select default or named exports and validate them
+  at generation time. Exclude tests, declarations, and the output file. Commit
+  generated source and provide a stale check.
+- Directory scanning and dynamic imports are generation-time behavior only.
+  Runtime bot code must use the generated static imports.
+- Keep `voice` separate from `bot` so `@discordjs/voice` is optional for
+  non-voice consumers. Limit it to one-guild connection lifecycle, Ready
+  waiting, bounded recovery, cancellation, hooks, and cleanup.
+- Keep audio players, speakers/listeners, queues, persistence, status syncing,
+  and guild-level connection managers in consumers.
+- Prefer responsibility files with a barrel-only `index.ts`. Split types,
+  errors, adapters, async utilities, discovery, generation, and lifecycle
+  logic once an entrypoint starts owning multiple concerns.
+
+## JSR Documentation
+
+- Add JSDoc to every exported class, function, interface, type, option object,
+  error, and non-obvious constant. JSR renders this documentation as the public
+  API reference.
+- Document behavior and contracts rather than restating the TypeScript name:
+  ownership, defaults, validation, cancellation, failure modes, idempotency,
+  cleanup, and whether an operation runs at generation time or runtime.
+- Add `@param`, `@returns`, and `@throws` where they clarify behavior. Include a
+  short `@example` for generators, lifecycle controllers, or APIs whose correct
+  call sequence is not obvious.
+- Keep internal helpers unexported. Do not expose implementation details merely
+  to make them documentable.
+- Treat missing or stale public JSDoc as a release issue alongside slow types.
+  Inspect the JSR dry-run file list and warnings before considering publication
+  validation complete.
 
 ## Design Guardrails
 
@@ -65,6 +103,9 @@ unrelated dependency or framework into an existing package.
 - Do not bypass JSR slow-type checks.
 - Keep commands and events statically registered; do not add runtime directory
   scanning.
+- A JSR unanalyzable-dynamic-import warning is expected for a Bun-time registry
+  validator that imports absolute consumer file URLs. Confirm it is confined
+  to generation code and require the dry-run itself to succeed.
 - Keep realtime v0.1 behavior on SSE. Add WebSocket only after an explicit
   architecture decision.
 - Never expose configured secrets in errors or logs.
