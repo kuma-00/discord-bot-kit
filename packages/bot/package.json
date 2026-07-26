@@ -3,7 +3,17 @@
     "version": "0.1.0",
     "license": "MIT",
     "type": "module",
-    "exports": "./src/index.ts",
+    "exports": {
+        ".": "./src/index.ts",
+        "./commands": "./src/commands.ts",
+        "./dispatcher": "./src/dispatcher.ts",
+        "./errors": "./src/errors.ts",
+        "./events": "./src/events.ts",
+        "./generator": "./src/generator.ts",
+        "./lifecycle": "./src/lifecycle.ts",
+        "./registry": "./src/registry.ts",
+        "./types": "./src/types.ts"
+    },
     "scripts": {
         "check": "tsc -p tsconfig.json && biome check .",
         "test": "bun test",

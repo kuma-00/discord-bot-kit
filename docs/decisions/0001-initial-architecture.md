@@ -14,7 +14,8 @@
 - Contractとframework-neutral coreを先に置き、ElysiaとSvelteをadapterにする。
 - HTTPはFetch、Backend境界はWeb標準Request/Responseを使用する。
 - Realtime v0.1.0はSSEのみとする。
-- Discord Command/Eventは静的Registryを使用する。
+- Discord Command/Eventは生成時のディレクトリ検出から静的Registryを生成する。
+  実行時のディレクトリ走査は行わない。
 - Bot固有domain、DB実装、UIを共通libraryへ含めない。
 
 ## Consequences

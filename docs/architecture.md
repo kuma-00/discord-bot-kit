@@ -28,7 +28,7 @@ contracts
 - 設定sourceの統合と検証
 - HTTP・イベント契約
 - timeout、abort、API key、SSE再接続
-- Discord Clientのlifecycleと静的Registry
+- Discord Clientのlifecycle、生成された静的Registry、型安全なCommand階層
 - framework-neutralなroute実行、認証、エラー変換
 - FrontendのAPI結果とrealtime状態
 - Elysia、Svelteへの薄いadapter
