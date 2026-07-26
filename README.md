@@ -28,6 +28,16 @@ bun run jsr:dry-run
 
 `jsr:dry-run`は公開検証だけを実行し、JSRへパッケージを公開しません。
 
+## AI Agent Skill
+
+ライブラリを利用するBunプロジェクトで、パッケージ選択、実装、検証を支援するAgent Skillを提供しています。
+
+```sh
+npx skills add kuma-00/discord-bot-kit --skill use-discord-bot-kit
+```
+
+導入後は、`use-discord-bot-kit`スキルを指定して、利用したいBot、Backend、Frontend、HTTP、SSEなどの要件を伝えてください。スキルを更新する場合は、同じコマンドを再実行するか、Skills CLIの更新コマンドを使用します。
+
 ## Releases
 
 `main`へ入ったConventional Commitをもとに、release-pleaseが全パッケージ共通のRelease PRを作成します。

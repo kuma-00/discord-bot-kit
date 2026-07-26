@@ -1,0 +1,4 @@
+interface:
+  display_name: "Use Discord Bot Kit"
+  short_description: "Build Bun apps with discord-bot-kit packages"
+  default_prompt: "Use $use-discord-bot-kit to integrate the appropriate discord-bot-kit packages into this Bun project and verify the result."
