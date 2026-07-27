@@ -34,7 +34,13 @@ export interface SseSubscriptionOptions<
         error: unknown,
         event: MessageEvent,
     ) => void | Promise<void>;
-    readonly onStateChange?: (state: SseConnectionState) => void;
+    /**
+     * Observes connection state without delaying EventSource lifecycle work.
+     * Synchronous throws and rejected promises are contained.
+     */
+    readonly onStateChange?: (
+        state: SseConnectionState,
+    ) => void | Promise<void>;
     readonly fetch?: FetchLike;
     readonly headers?: Readonly<Record<string, string>>;
     readonly withCredentials?: boolean;
@@ -55,6 +61,7 @@ export class SseSubscription<
     private source: EventSource | undefined;
     private state: SseConnectionState = "closed";
     private lifecycleVersion = 0;
+    private deliveryChain: Promise<void> = Promise.resolve();
 
     constructor(
         private readonly options: SseSubscriptionOptions<
@@ -133,7 +140,7 @@ export class SseSubscription<
         for (const eventType of eventTypes) {
             source.addEventListener(eventType, (event) => {
                 if (!("data" in event)) return;
-                void this.handleEvent(event, source, lifecycleVersion);
+                this.enqueueEvent(event, source, lifecycleVersion);
             });
         }
     }
@@ -162,6 +169,26 @@ export class SseSubscription<
                 signal: init.signal as AbortSignal,
             });
         };
+    }
+
+    private enqueueEvent(
+        event: MessageEvent,
+        source: EventSource,
+        lifecycleVersion: number,
+    ): void {
+        this.deliveryChain = this.deliveryChain
+            .then(async () => {
+                if (
+                    this.source !== source ||
+                    this.lifecycleVersion !== lifecycleVersion
+                )
+                    return;
+                await this.handleEvent(event, source, lifecycleVersion);
+            })
+            .catch(() => {
+                // handleEvent contains consumer failures; keep the queue alive
+                // if an unexpected internal failure escapes that boundary.
+            });
     }
 
     private async handleEvent(

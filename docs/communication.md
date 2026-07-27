@@ -50,5 +50,12 @@ transportはJSONとevent contractの検証だけを担当します。停止は�
 JSON不正、未知の契約、payload validation失敗はイベント単位で`onEventError`へ通知し、
 接続と後続イベントの配送を継続します。接続状態は標準`readyState`に対応する
 `connecting`、`open`、`closed`だけを通知します。named eventは契約の`type`、
-通常のeventは`message` listenerで受信します。独自のretry clamp、jitter、
-callback直列化、parser互換層は提供しません。
+通常のeventは`message` listenerで受信します。
+
+`SseSubscription`はEventSourceが受信したeventを受信順に処理します。JSON parse、
+contract validation、`onEvent`、`onEventError`を含むapplication-level deliveryは
+直列化され、後から受信したeventが先にconsumerへ適用されることを防ぎます。
+`stop()`はnetwork connectionを同期的に閉じ、未実行の旧connection eventを破棄します。
+実行開始済みのcallbackは完了を許可し、新connectionのeventはその完了後に処理します。
+独自のretry clamp、jitter、SSE parser互換層は提供しません。SSE protocol、network
+lifecycle、reconnect、retry、`Last-Event-ID`は引き続き`eventsource`へ委譲します。

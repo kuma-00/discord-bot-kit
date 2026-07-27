@@ -137,7 +137,9 @@ describe("SseSubscription", () => {
             url: "https://example.test/events",
             contract,
             fetch: async () => sseResponse(`data: ${envelope}\n\n`),
-            onStateChange: (state) => states.push(state),
+            onStateChange: (state) => {
+                states.push(state);
+            },
             onEvent: (event) => {
                 values.push(event.payload.value);
                 subscription.stop();
@@ -223,7 +225,9 @@ describe("SseSubscription", () => {
                 sseResponse(
                     `event: open\ndata: ${openEnvelope}\n\nevent: error\ndata: ${errorEnvelope}\n\n`,
                 ),
-            onStateChange: (state) => states.push(state),
+            onStateChange: (state) => {
+                states.push(state);
+            },
             onEvent: (event) => {
                 receivedTypes.push(event.type);
                 if (receivedTypes.length === 2) {
@@ -321,7 +325,9 @@ describe("SseSubscription", () => {
                 subscription.stop();
                 return new Response(null, { status: 204 });
             },
-            onStateChange: (state) => states.push(state),
+            onStateChange: (state) => {
+                states.push(state);
+            },
             onEvent: () => {},
         });
 
@@ -488,6 +494,268 @@ describe("SseSubscription", () => {
         expect(delivered).toEqual([]);
         expect(errors).toEqual([]);
         subscription.stop();
+    });
+
+    test("serializes application delivery in receive order", async () => {
+        const body = ["A", "B", "C"]
+            .map(
+                (value) =>
+                    `data: ${JSON.stringify({
+                        ...JSON.parse(envelope),
+                        id: value,
+                        payload: { value },
+                    })}\n\n`,
+            )
+            .join("");
+        let releaseA: (() => void) | undefined;
+        const aGate = new Promise<void>((resolve) => {
+            releaseA = resolve;
+        });
+        let resolveStartedA: (() => void) | undefined;
+        const startedA = new Promise<void>((resolve) => {
+            resolveStartedA = resolve;
+        });
+        let resolveCompleted: (() => void) | undefined;
+        const completed = new Promise<void>((resolve) => {
+            resolveCompleted = resolve;
+        });
+        const order: string[] = [];
+        const subscription = new SseSubscription({
+            url: "https://example.test/events",
+            contract,
+            fetch: async () => sseResponse(body),
+            onEvent: async (event) => {
+                const value = event.payload.value;
+                order.push(`${value} start`);
+                if (value === "A") {
+                    resolveStartedA?.();
+                    await aGate;
+                }
+                order.push(`${value} end`);
+                if (value === "C") {
+                    subscription.stop();
+                    resolveCompleted?.();
+                }
+            },
+        });
+
+        subscription.start();
+        await startedA;
+        await Bun.sleep(0);
+        expect(order).toEqual(["A start"]);
+        releaseA?.();
+        await completed;
+
+        expect(order).toEqual([
+            "A start",
+            "A end",
+            "B start",
+            "B end",
+            "C start",
+            "C end",
+        ]);
+    });
+
+    test("continues serial delivery after validation failure", async () => {
+        const valid = (value: string) =>
+            JSON.stringify({
+                ...JSON.parse(envelope),
+                id: value,
+                payload: { value },
+            });
+        const body = `data: ${valid("A")}\n\ndata: not-json\n\ndata: ${valid("C")}\n\n`;
+        let resolveCompleted: (() => void) | undefined;
+        const completed = new Promise<void>((resolve) => {
+            resolveCompleted = resolve;
+        });
+        const order: string[] = [];
+        const subscription = new SseSubscription({
+            url: "https://example.test/events",
+            contract,
+            fetch: async () => sseResponse(body),
+            onEvent: (event) => {
+                order.push(`event ${event.payload.value}`);
+                if (event.payload.value === "C") {
+                    subscription.stop();
+                    resolveCompleted?.();
+                }
+            },
+            onEventError: () => {
+                order.push("error B");
+            },
+        });
+
+        subscription.start();
+        await completed;
+
+        expect(order).toEqual(["event A", "error B", "event C"]);
+    });
+
+    test("continues serial delivery after onEvent rejects", async () => {
+        const body = ["A", "B"]
+            .map(
+                (value) =>
+                    `data: ${JSON.stringify({
+                        ...JSON.parse(envelope),
+                        id: value,
+                        payload: { value },
+                    })}\n\n`,
+            )
+            .join("");
+        let resolveCompleted: (() => void) | undefined;
+        const completed = new Promise<void>((resolve) => {
+            resolveCompleted = resolve;
+        });
+        const order: string[] = [];
+        const subscription = new SseSubscription({
+            url: "https://example.test/events",
+            contract,
+            fetch: async () => sseResponse(body),
+            onEvent: async (event) => {
+                order.push(`event ${event.payload.value}`);
+                if (event.payload.value === "A")
+                    throw new Error("A handler failed");
+                subscription.stop();
+                resolveCompleted?.();
+            },
+            onEventError: () => {
+                order.push("error A");
+            },
+        });
+
+        subscription.start();
+        await completed;
+
+        expect(order).toEqual(["event A", "error A", "event B"]);
+    });
+
+    test("continues delivery when onEventError rejects", async () => {
+        const body = `data: not-json\n\ndata: ${envelope}\n\n`;
+        let resolveCompleted: (() => void) | undefined;
+        const completed = new Promise<void>((resolve) => {
+            resolveCompleted = resolve;
+        });
+        const delivered: string[] = [];
+        const subscription = new SseSubscription({
+            url: "https://example.test/events",
+            contract,
+            fetch: async () => sseResponse(body),
+            onEvent: (event) => {
+                delivered.push(event.payload.value);
+                subscription.stop();
+                resolveCompleted?.();
+            },
+            onEventError: async () => {
+                throw new Error("error callback failed");
+            },
+        });
+
+        subscription.start();
+        await completed;
+
+        expect(delivered).toEqual(["ok"]);
+    });
+
+    test("drops queued events from a stopped lifecycle", async () => {
+        const body = ["A", "B"]
+            .map(
+                (value) =>
+                    `data: ${JSON.stringify({
+                        ...JSON.parse(envelope),
+                        id: value,
+                        payload: { value },
+                    })}\n\n`,
+            )
+            .join("");
+        let releaseA: (() => void) | undefined;
+        const aGate = new Promise<void>((resolve) => {
+            releaseA = resolve;
+        });
+        let resolveStartedA: (() => void) | undefined;
+        const startedA = new Promise<void>((resolve) => {
+            resolveStartedA = resolve;
+        });
+        let resolveFinishedA: (() => void) | undefined;
+        const finishedA = new Promise<void>((resolve) => {
+            resolveFinishedA = resolve;
+        });
+        const delivered: string[] = [];
+        const subscription = new SseSubscription({
+            url: "https://example.test/events",
+            contract,
+            fetch: async () => sseResponse(body),
+            onEvent: async (event) => {
+                delivered.push(`${event.payload.value} start`);
+                if (event.payload.value === "A") {
+                    resolveStartedA?.();
+                    await aGate;
+                    delivered.push("A end");
+                    resolveFinishedA?.();
+                }
+            },
+        });
+
+        subscription.start();
+        await startedA;
+        subscription.stop();
+        releaseA?.();
+        await finishedA;
+        await Bun.sleep(0);
+
+        expect(delivered).toEqual(["A start", "A end"]);
+    });
+
+    test("does not overlap delivery across stop and restart", async () => {
+        const eventFor = (value: string) =>
+            `data: ${JSON.stringify({
+                ...JSON.parse(envelope),
+                id: value,
+                payload: { value },
+            })}\n\n`;
+        let releaseA: (() => void) | undefined;
+        const aGate = new Promise<void>((resolve) => {
+            releaseA = resolve;
+        });
+        let resolveStartedA: (() => void) | undefined;
+        const startedA = new Promise<void>((resolve) => {
+            resolveStartedA = resolve;
+        });
+        let resolveCompleted: (() => void) | undefined;
+        const completed = new Promise<void>((resolve) => {
+            resolveCompleted = resolve;
+        });
+        let fetches = 0;
+        const order: string[] = [];
+        const subscription = new SseSubscription({
+            url: "https://example.test/events",
+            contract,
+            fetch: async () =>
+                sseResponse(eventFor(++fetches === 1 ? "A" : "B")),
+            onEvent: async (event) => {
+                const value = event.payload.value;
+                order.push(`${value} start`);
+                if (value === "A") {
+                    resolveStartedA?.();
+                    await aGate;
+                }
+                order.push(`${value} end`);
+                if (value === "B") {
+                    subscription.stop();
+                    resolveCompleted?.();
+                }
+            },
+        });
+
+        subscription.start();
+        await startedA;
+        subscription.stop();
+        subscription.start();
+        await Bun.sleep(0);
+        expect(order).toEqual(["A start"]);
+        releaseA?.();
+        await completed;
+
+        expect(order).toEqual(["A start", "A end", "B start", "B end"]);
     });
 
     test("requires exactly one contract source", () => {
