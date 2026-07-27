@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.0](https://github.com/kuma-00/discord-bot-kit/compare/v0.3.1...v1.0.0) (2026-07-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* CommandDispatcher now rejects dispatch calls when a handler fails and no onError boundary is configured.
+
+### Features
+
+* improve bot execution and transport APIs ([1ff1193](https://github.com/kuma-00/discord-bot-kit/commit/1ff119356d5e71dcb6d640478bed7f25505e9b29))
+
+
+### Bug Fixes
+
+* enforce validated error details and robust SSE retries ([8e5d146](https://github.com/kuma-00/discord-bot-kit/commit/8e5d146cca31b7b37f8071be6d5728bfcf1cdefe))
+* preserve server retry interval after valid SSE events ([85888d7](https://github.com/kuma-00/discord-bot-kit/commit/85888d785b1692fa9151f472342182ce5919c8c0))
+
 ## [0.3.1](https://github.com/kuma-00/discord-bot-kit/compare/v0.3.0...v0.3.1) (2026-07-26)
 
 

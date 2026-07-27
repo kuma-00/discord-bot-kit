@@ -1,6 +1,6 @@
 {
     "name": "@kuma-00/bot-kit-frontend",
-    "version": "0.3.1",
+    "version": "1.0.0",
     "license": "MIT",
     "type": "module",
     "exports": "./src/index.ts",
