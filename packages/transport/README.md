@@ -1,6 +1,6 @@
 # @kuma-00/bot-kit-transport
 
-Contract-driven Fetch and reconnecting SSE transport for Bun applications.
+Contract-driven Fetch and standard EventSource transport for Bun applications.
 
 ```ts
 import { HttpClient } from "@kuma-00/bot-kit-transport";

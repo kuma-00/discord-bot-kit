@@ -16,13 +16,7 @@ import {
 } from "@kuma-00/bot-kit-transport";
 
 /** Observable state of a frontend realtime connection. */
-export type RealtimeConnectionState =
-    | "idle"
-    | "connecting"
-    | "open"
-    | "reconnecting"
-    | "closed"
-    | "error";
+export type RealtimeConnectionState = "idle" | "connecting" | "open" | "closed";
 
 /** Authentication state independent of any UI framework. */
 export type AuthenticationState<TUser> =
@@ -80,7 +74,7 @@ export class FrontendApiClient {
     }
 }
 
-/** Framework-neutral controller for a reconnecting realtime subscription. */
+/** Framework-neutral controller for a standard EventSource subscription. */
 export class RealtimeController<
     TType extends string,
     TVersion extends number,
@@ -114,10 +108,10 @@ export class RealtimeController<
 
     /** Starts realtime delivery without requiring the caller to await closure. */
     start(): void {
-        void this.subscription.start();
+        this.subscription.start();
     }
 
-    /** Stops delivery and closes after active event processing has drained. */
+    /** Stops delivery and closes the EventSource synchronously. */
     stop(): void {
         this.subscription.stop();
     }

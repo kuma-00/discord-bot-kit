@@ -7,8 +7,7 @@ export {
     type TransportFailureDetails,
 } from "./http.ts";
 export {
-    parseServerSentEvents,
-    type ServerSentEvent,
+    type SseConnectionState,
     SseSubscription,
     type SseSubscriptionOptions,
 } from "./sse.ts";

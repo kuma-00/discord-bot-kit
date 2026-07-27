@@ -39,30 +39,16 @@ Elysia adapterでは入力を次の形でhandlerへ渡します。
 
 ## SSE
 
-`SseEventBroker`がBackendから複数consumerへイベントを配信します。`SseSubscription`はfetch streamをincrementalに解析し、次を提供します。
-SSE protocolの解析には`eventsource-parser`を使用し、接続life cycle、再接続、
-schema検証、callbackの直列化はtransportが管理します。
-
-- 任意chunk境界への対応
-- `Last-Event-ID`
-- 既定3000msの再接続待機時間
-- server指定`retry`による以後の再接続待機時間の更新
-- AbortSignalによる停止
-- JSONとevent contractの検証
+`SseEventBroker`がBackendから複数consumerへイベントを配信します。`SseSubscription`は
+標準`EventSource`の薄い型付きwrapperです。SSE protocol解析、接続life cycle、再接続、
+`retry`、`Last-Event-ID`、HTTP statusとmedia typeの判定は`eventsource`へ委譲し、
+transportはJSONとevent contractの検証だけを担当します。停止は標準APIと同じく
+`close()`相当で同期的に行われます。
 
 イベントEnvelopeは`id`、`type`、`version`、`occurredAt`、任意の`guildId`、`payload`を持ちます。v0.1.0はSSEのみを提供し、WebSocketは扱いません。
 `createEventRegistry`で複数のevent contractを`type + version`単位に束ねられます。
 JSON不正、未知の契約、payload validation失敗はイベント単位で`onEventError`へ通知し、
-接続と後続イベントの配送を継続します。network・HTTP・stream errorは再接続対象です。
-event callbackは直列に実行します。停止時はnetwork resourceを直ちに解放し、開始済みの
-event処理と、それに伴う`onEventError`が完了してから`closed`へ遷移します。
-成功responseはHTTP `200`かつ`Content-Type: text/event-stream`を必須とし、
-Content-Typeのparameterは許可します。
-headerが欠落している場合や別のmedia typeの場合は接続失敗として再接続します。
-HTTP `204 No Content`はserverによる明示的な停止指示として扱い、再接続しません。
-再接続は現在の待機時間が経過してから行い、接続失敗が続いても自動的には増加しません。
-`minRetryMs`と`maxRetryMs`を指定した場合だけ待機時間をclampします。標準外の
-full jitterが必要な場合は`jitter: true`で明示的に有効化できます。
-event IDはSSE protocolのframe終端を解析した時点でacknowledgeします。
-未完了のframeは反映せず、dataを持たずdispatchされない完了frameのIDも反映し、空の`id`は以後の
-`Last-Event-ID`送信を解除します。
+接続と後続イベントの配送を継続します。接続状態は標準`readyState`に対応する
+`connecting`、`open`、`closed`だけを通知します。named eventは契約の`type`、
+通常のeventは`message` listenerで受信します。独自のretry clamp、jitter、
+callback直列化、parser互換層は提供しません。
