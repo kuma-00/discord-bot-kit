@@ -417,6 +417,47 @@ describe("SSE", () => {
         }
     });
 
+    test("preserves server retry after validating an event", async () => {
+        const payload = schema<{ value: string }>(
+            (value): value is { value: string } =>
+                typeof value === "object" &&
+                value !== null &&
+                typeof (value as { value?: unknown }).value === "string",
+        );
+        const contract = defineEventContract({
+            type: "Updated",
+            version: 1,
+            payload,
+        });
+        const delays: number[] = [];
+        let subscription: SseSubscription<"Updated", 1, typeof payload>;
+        subscription = new SseSubscription({
+            url: "https://example.test/events",
+            contract,
+            minRetryMs: 500,
+            maxRetryMs: 10_000,
+            random: () => 0.5,
+            waitForRetry: async (delay) => {
+                delays.push(delay);
+                subscription.stop();
+            },
+            fetch: async () =>
+                new Response(
+                    `retry: 5000\ndata: ${JSON.stringify({
+                        id: "valid",
+                        type: "Updated",
+                        version: 1,
+                        occurredAt: "now",
+                        payload: { value: "ok" },
+                    })}\n\n`,
+                ),
+            onEvent: () => {},
+        });
+
+        await subscription.start();
+        expect(delays).toEqual([2_500]);
+    });
+
     test("acknowledges invalid event IDs before reconnecting", async () => {
         const payload = schema<Record<string, never>>(
             (value): value is Record<string, never> =>

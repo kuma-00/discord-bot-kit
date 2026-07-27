@@ -171,8 +171,9 @@ export class SseSubscription<
     private async run(signal: AbortSignal): Promise<void> {
         const fetchImplementation = this.options.fetch ?? globalThis.fetch;
         const minRetryMs = this.options.minRetryMs ?? 500;
-        let retryMs = minRetryMs;
         const maxRetryMs = this.options.maxRetryMs ?? 10_000;
+        let baseRetryMs = minRetryMs;
+        let retryMs = baseRetryMs;
         const random = this.options.random ?? Math.random;
         let connected = false;
         while (!signal.aborted) {
@@ -206,10 +207,11 @@ export class SseSubscription<
                     // is later discarded, so malformed events are not replayed.
                     if (event.id !== undefined) this.lastEventId = event.id;
                     if (event.retry !== undefined) {
-                        retryMs = Math.min(
+                        baseRetryMs = Math.min(
                             Math.max(event.retry, minRetryMs),
                             maxRetryMs,
                         );
+                        retryMs = baseRetryMs;
                     }
                     try {
                         const raw = JSON.parse(event.data) as unknown;
@@ -224,8 +226,9 @@ export class SseSubscription<
                                   raw,
                               );
                         // A validated event proves the stream is healthy enough
-                        // to reset accumulated reconnect backoff.
-                        retryMs = minRetryMs;
+                        // to reset accumulated backoff without discarding the
+                        // server's requested reconnect interval.
+                        retryMs = baseRetryMs;
                         await this.options.onEvent(
                             parsed as TContracts extends readonly []
                                 ? EventEnvelope<
