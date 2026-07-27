@@ -117,7 +117,7 @@ export class RealtimeController<
         void this.subscription.start();
     }
 
-    /** Stops delivery and transitions to closed after the active fetch exits. */
+    /** Stops delivery and closes after active event processing has drained. */
     stop(): void {
         this.subscription.stop();
     }

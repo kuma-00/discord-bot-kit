@@ -10,7 +10,8 @@
         "biome:write": "biome check --write ."
     },
     "dependencies": {
-        "@kuma-00/bot-kit-contracts": "workspace:*"
+        "@kuma-00/bot-kit-contracts": "workspace:*",
+        "eventsource-parser": "^3.1.0"
     },
     "devDependencies": {
         "@types/bun": "1.3.13",

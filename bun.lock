@@ -13,7 +13,7 @@
     },
     "packages/backend": {
       "name": "@kuma-00/bot-kit-backend",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "dependencies": {
         "@kuma-00/bot-kit-contracts": "workspace:*",
       },
@@ -24,7 +24,7 @@
     },
     "packages/bot": {
       "name": "@kuma-00/bot-kit-bot",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "dependencies": {
         "@kuma-00/bot-kit-registry": "workspace:*",
         "discord.js": "^14.25.1",
@@ -36,7 +36,7 @@
     },
     "packages/config": {
       "name": "@kuma-00/bot-kit-config",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "dependencies": {
         "yaml": "^2.8.1",
       },
@@ -47,7 +47,7 @@
     },
     "packages/contracts": {
       "name": "@kuma-00/bot-kit-contracts",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "devDependencies": {
         "@types/bun": "1.3.13",
         "typescript": "7.0.2",
@@ -55,7 +55,7 @@
     },
     "packages/elysia": {
       "name": "@kuma-00/bot-kit-elysia",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "dependencies": {
         "@kuma-00/bot-kit-backend": "workspace:*",
         "@kuma-00/bot-kit-contracts": "workspace:*",
@@ -71,7 +71,7 @@
     },
     "packages/frontend": {
       "name": "@kuma-00/bot-kit-frontend",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "dependencies": {
         "@kuma-00/bot-kit-contracts": "workspace:*",
         "@kuma-00/bot-kit-transport": "workspace:*",
@@ -83,7 +83,7 @@
     },
     "packages/registry": {
       "name": "@kuma-00/bot-kit-registry",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "devDependencies": {
         "@types/bun": "1.3.13",
         "typescript": "7.0.2",
@@ -91,7 +91,7 @@
     },
     "packages/svelte": {
       "name": "@kuma-00/bot-kit-svelte",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "dependencies": {
         "@kuma-00/bot-kit-frontend": "workspace:*",
       },
@@ -106,9 +106,10 @@
     },
     "packages/transport": {
       "name": "@kuma-00/bot-kit-transport",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "dependencies": {
         "@kuma-00/bot-kit-contracts": "workspace:*",
+        "eventsource-parser": "^3.1.0",
       },
       "devDependencies": {
         "@types/bun": "1.3.13",
@@ -117,7 +118,7 @@
     },
     "packages/voice": {
       "name": "@kuma-00/bot-kit-voice",
-      "version": "0.1.0",
+      "version": "0.3.1",
       "dependencies": {
         "@discordjs/voice": "^0.19.2",
         "discord.js": "^14.25.1",
@@ -336,6 +337,8 @@
     "esm-env": ["esm-env@1.2.2", "", {}, "sha512-Epxrv+Nr/CaL4ZcFGPJIYLWFom+YeV1DqMLHJoEd9SYRxNbaFruBwfEX/kkHUJf55j2+TUbmDcmuilbP1TmXHA=="],
 
     "esrap": ["esrap@2.3.0", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.4.15" }, "peerDependencies": { "@typescript-eslint/types": "^8.2.0" }, "optionalPeers": ["@typescript-eslint/types"] }, "sha512-GQ/7RN8uOtEfNpzZzBMTzW9JBcX42oaSVtPzdF+6cEL8pqIL094iUpr9jzYGn4O4P/1S60dJ6izyT8F4LYARng=="],
+
+    "eventsource-parser": ["eventsource-parser@3.1.0", "", {}, "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg=="],
 
     "exact-mirror": ["exact-mirror@0.2.7", "", { "peerDependencies": { "@sinclair/typebox": "^0.34.15" }, "optionalPeers": ["@sinclair/typebox"] }, "sha512-+MeEmDcLA4o/vjK2zujgk+1VTxPR4hdp23qLqkWfStbECtAq9gmsvQa3LW6z/0GXZyHJobrCnmy1cdeE7BjsYg=="],
 
