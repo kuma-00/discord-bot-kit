@@ -295,10 +295,50 @@ describe("SSE", () => {
         expect(errors).toHaveLength(1);
     });
 
-    test("applies bounded jittered backoff and resets after opening", async () => {
+    test("grows backoff across failures and immediate disconnects", async () => {
         const payload = schema<{ value: string }>(
             (value): value is { value: string } =>
                 typeof value === "object" && value !== null,
+        );
+        const contract = defineEventContract({
+            type: "Updated",
+            version: 1,
+            payload,
+        });
+        const delays: number[] = [];
+        for (const fetch of [
+            async () => {
+                throw new Error("offline");
+            },
+            async () => new Response(""),
+        ]) {
+            delays.length = 0;
+            let subscription: SseSubscription<"Updated", 1, typeof payload>;
+            subscription = new SseSubscription({
+                url: "https://example.test/events",
+                contract,
+                minRetryMs: 100,
+                maxRetryMs: 400,
+                random: () => 0.5,
+                waitForRetry: async (delay) => {
+                    delays.push(delay);
+                    if (delays.length === 2) subscription.stop();
+                },
+                fetch,
+                onEvent: () => {},
+            });
+
+            await subscription.start();
+            expect(delays).toEqual([50, 100]);
+        }
+    });
+
+    test("resets accumulated backoff after a valid event", async () => {
+        const payload = schema<{ value: string }>(
+            (value): value is { value: string } =>
+                typeof value === "object" &&
+                value !== null &&
+                typeof (value as { value?: unknown }).value === "string",
         );
         const contract = defineEventContract({
             type: "Updated",
@@ -312,21 +352,97 @@ describe("SSE", () => {
             url: "https://example.test/events",
             contract,
             minRetryMs: 100,
-            maxRetryMs: 200,
+            maxRetryMs: 400,
             random: () => 0.5,
             waitForRetry: async (delay) => {
                 delays.push(delay);
-                if (delays.length === 4) subscription.stop();
+                if (delays.length === 3) subscription.stop();
             },
             fetch: async () => {
                 attempt++;
-                if (attempt === 3) return new Response("");
-                throw new Error("offline");
+                if (attempt < 3) throw new Error("offline");
+                return new Response(
+                    `data: ${JSON.stringify({
+                        id: "valid",
+                        type: "Updated",
+                        version: 1,
+                        occurredAt: "now",
+                        payload: { value: "ok" },
+                    })}\n\n`,
+                );
             },
             onEvent: () => {},
         });
 
         await subscription.start();
-        expect(delays).toEqual([50, 100, 50, 100]);
+        expect(delays).toEqual([50, 100, 50]);
+    });
+
+    test("clamps server retry values before applying jitter", async () => {
+        const payload = schema<Record<string, never>>(
+            (value): value is Record<string, never> =>
+                typeof value === "object" && value !== null,
+        );
+        const contract = defineEventContract({
+            type: "Updated",
+            version: 1,
+            payload,
+        });
+        const cases = [
+            { retry: 5_000, expectedDelay: 2_500 },
+            { retry: 600_000, expectedDelay: 5_000 },
+            { retry: 1, expectedDelay: 250 },
+        ];
+
+        for (const testCase of cases) {
+            const delays: number[] = [];
+            let subscription: SseSubscription<"Updated", 1, typeof payload>;
+            subscription = new SseSubscription({
+                url: "https://example.test/events",
+                contract,
+                minRetryMs: 500,
+                maxRetryMs: 10_000,
+                random: () => 0.5,
+                waitForRetry: async (delay) => {
+                    delays.push(delay);
+                    subscription.stop();
+                },
+                fetch: async () =>
+                    new Response(`retry: ${testCase.retry}\ndata: invalid\n\n`),
+                onEvent: () => {},
+            });
+
+            await subscription.start();
+            expect(delays).toEqual([testCase.expectedDelay]);
+        }
+    });
+
+    test("acknowledges invalid event IDs before reconnecting", async () => {
+        const payload = schema<Record<string, never>>(
+            (value): value is Record<string, never> =>
+                typeof value === "object" && value !== null,
+        );
+        const contract = defineEventContract({
+            type: "Updated",
+            version: 1,
+            payload,
+        });
+        const lastEventIds: Array<string | null> = [];
+        let subscription: SseSubscription<"Updated", 1, typeof payload>;
+        subscription = new SseSubscription({
+            url: "https://example.test/events",
+            contract,
+            fetch: async (_input, init) => {
+                const headers = new Headers(init?.headers);
+                lastEventIds.push(headers.get("last-event-id"));
+                if (lastEventIds.length === 2) subscription.stop();
+                return new Response("id: 123\ndata: invalid\n\n");
+            },
+            waitForRetry: async () => {},
+            onEvent: () => {},
+        });
+
+        await subscription.start();
+        expect(lastEventIds).toEqual([null, "123"]);
     });
 });

@@ -6,6 +6,7 @@ import {
     defineRoute,
     executeRoute,
     healthResponse,
+    type RouteResult,
     SseEventBroker,
 } from "../src/index.ts";
 
@@ -101,6 +102,83 @@ describe("backend core", () => {
             expect(response.status).toBe(testCase.status);
             expect(await response.json()).not.toHaveProperty("status");
         }
+    });
+
+    test("requires failure details at compile time", () => {
+        const result: RouteResult<Record<string, unknown>, object> = {
+            ok: false,
+            // @ts-expect-error Route failures require validated details.
+            error: {
+                code: "missing",
+                message: "Missing",
+            },
+        };
+        expect(result.ok).toBe(false);
+    });
+
+    test("validates failure details and safely maps invalid values", async () => {
+        const contract = defineHttpContract({
+            id: "failure-details",
+            method: "GET",
+            path: "/failure",
+            input: objectSchema,
+            output: objectSchema,
+            error: objectSchema,
+        });
+        const request = new Request("https://example.test/failure");
+        const valid = await executeRoute(
+            defineRoute({
+                contract,
+                handler: () => ({
+                    ok: false,
+                    status: 404,
+                    error: {
+                        code: "not-found",
+                        message: "Not found",
+                        details: { resource: "item" },
+                    },
+                }),
+            }),
+            request,
+            {},
+        );
+        expect(valid.status).toBe(404);
+        expect(await valid.json()).toEqual({
+            ok: false,
+            error: {
+                code: "not-found",
+                message: "Not found",
+                details: { resource: "item" },
+            },
+        });
+
+        const invalid = await executeRoute(
+            defineRoute({
+                contract,
+                handler: () => ({
+                    ok: false,
+                    status: 422,
+                    error: {
+                        code: "invalid",
+                        message: "Invalid",
+                        details: "not-an-object" as unknown as Record<
+                            string,
+                            unknown
+                        >,
+                    },
+                }),
+            }),
+            request,
+            {},
+        );
+        expect(invalid.status).toBe(500);
+        expect(await invalid.json()).toEqual({
+            ok: false,
+            error: {
+                code: "internal-error",
+                message: "Internal server error",
+            },
+        });
     });
 
     test("keeps validation failures behind the safe 500 response", async () => {

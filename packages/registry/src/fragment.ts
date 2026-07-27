@@ -38,10 +38,13 @@ export async function buildStaticRegistryFragment(
     const identifiers: string[] = [];
 
     for (const [index, file] of files.entries()) {
-        const loaded = (await import(pathToFileURL(file).href)) as Record<
-            string,
-            unknown
-        >;
+        const fileUrl = pathToFileURL(file).href;
+        // Keep the file:// prefix static so JSR can analyze the import. The
+        // dynamic suffix intentionally targets an absolute consumer module
+        // during registry generation and never relies on an import map.
+        const loaded = (await import(
+            `file://${fileUrl.slice("file://".length)}`
+        )) as Record<string, unknown>;
         if (!(moduleExport in loaded)) {
             throw new StaticRegistryError(
                 "missing-export",

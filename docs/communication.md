@@ -21,6 +21,9 @@ interface HttpRequestInput {
 `defineRoute`はHTTP契約とframework-neutral handlerを対応付けます。`executeRoute`が入力と出力を検証し、`Request`から`Response`を生成します。
 handlerは成功・失敗のどちらにも任意の`status`を指定できます。未指定時は成功`200`、
 失敗`400`です。`status`はHTTP responseへ適用され、JSON envelopeには含めません。
+失敗resultの`error.details`は必須で、常にcontractのerror schemaで検証します。
+詳細が不要なrouteは`undefined`、`null`、空objectなどを明示的に許可するschemaを
+利用側で定義します。
 
 Elysia adapterでは入力を次の形でhandlerへ渡します。
 
@@ -40,9 +43,9 @@ Elysia adapterでは入力を次の形でhandlerへ渡します。
 
 - 任意chunk境界への対応
 - `Last-Event-ID`
-- server指定`retry`
+- `[minRetryMs, maxRetryMs]`へclampされるserver指定`retry`
 - exponential backoff
-- full jitterと正常接続後のbackoff reset
+- full jitterと正常event validation後のbackoff reset
 - AbortSignalによる停止
 - JSONとevent contractの検証
 
@@ -50,3 +53,5 @@ Elysia adapterでは入力を次の形でhandlerへ渡します。
 `createEventRegistry`で複数のevent contractを`type + version`単位に束ねられます。
 JSON不正、未知の契約、payload validation失敗はイベント単位で`onEventError`へ通知し、
 接続と後続イベントの配送を継続します。network・HTTP・stream errorは再接続対象です。
+event IDはframe受信時にacknowledgeします。不正eventは破棄され、再接続後にも
+`Last-Event-ID`より後から再開するため再送されません。

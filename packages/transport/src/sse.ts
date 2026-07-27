@@ -197,14 +197,20 @@ export class SseSubscription<
                     );
                 }
                 connected = true;
-                retryMs = minRetryMs;
                 this.options.onStateChange?.("open");
                 for await (const event of parseServerSentEvents(
                     responseChunks(response.body),
                 )) {
                     if (signal.aborted) break;
+                    // Receiving a frame acknowledges its ID even when its data
+                    // is later discarded, so malformed events are not replayed.
                     if (event.id !== undefined) this.lastEventId = event.id;
-                    if (event.retry !== undefined) retryMs = event.retry;
+                    if (event.retry !== undefined) {
+                        retryMs = Math.min(
+                            Math.max(event.retry, minRetryMs),
+                            maxRetryMs,
+                        );
+                    }
                     try {
                         const raw = JSON.parse(event.data) as unknown;
                         const parsed = this.options.contracts
@@ -217,6 +223,9 @@ export class SseSubscription<
                                   >,
                                   raw,
                               );
+                        // A validated event proves the stream is healthy enough
+                        // to reset accumulated reconnect backoff.
+                        retryMs = minRetryMs;
                         await this.options.onEvent(
                             parsed as TContracts extends readonly []
                                 ? EventEnvelope<

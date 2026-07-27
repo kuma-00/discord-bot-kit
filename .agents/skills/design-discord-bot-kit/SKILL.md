@@ -114,9 +114,9 @@ unrelated dependency or framework into an existing package.
 - Do not bypass JSR slow-type checks.
 - Keep commands and events statically registered; do not add runtime directory
   scanning.
-- A JSR unanalyzable-dynamic-import warning is expected for a Bun-time registry
-  validator that imports absolute consumer file URLs. Confirm it is confined
-  to generation code and require the dry-run itself to succeed.
+- Keep the `file://` prefix of Bun-time registry validation imports statically
+  analyzable. The dynamic suffix may target absolute consumer modules, but JSR
+  dry-runs must complete without an unanalyzable-dynamic-import warning.
 - Keep realtime v0.1 behavior on SSE. Add WebSocket only after an explicit
   architecture decision.
 - Never expose configured secrets in errors or logs.

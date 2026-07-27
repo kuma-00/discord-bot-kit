@@ -38,7 +38,7 @@ export type RouteResult<TOutput, TError> =
           readonly error: {
               readonly code: string;
               readonly message: string;
-              readonly details?: TError;
+              readonly details: TError;
           };
           readonly status?: number;
       };
