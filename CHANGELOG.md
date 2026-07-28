@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/kuma-00/discord-bot-kit/compare/v1.0.0...v1.1.0) (2026-07-28)
+
+
+### Features
+
+* add grouped static registry generation ([ce2e274](https://github.com/kuma-00/discord-bot-kit/commit/ce2e27489ec3bffdde2ce98338c31f8a5c3221ea))
+
 ## [1.0.0](https://github.com/kuma-00/discord-bot-kit/compare/v0.3.1...v1.0.0) (2026-07-27)
 
 
