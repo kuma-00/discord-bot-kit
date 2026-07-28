@@ -3,6 +3,7 @@ export class StaticRegistryError extends Error {
     constructor(
         readonly code:
             | "empty-source"
+            | "duplicate-export-name"
             | "invalid-export-name"
             | "missing-export"
             | "invalid-entry"

@@ -39,12 +39,10 @@ export async function buildStaticRegistryFragment(
 
     for (const [index, file] of files.entries()) {
         const fileUrl = pathToFileURL(file).href;
-        // Keep the file:// prefix static so JSR can analyze the import. The
-        // dynamic suffix intentionally targets an absolute consumer module
-        // during registry generation and never relies on an import map.
-        const loaded = (await import(
-            `file://${fileUrl.slice("file://".length)}`
-        )) as Record<string, unknown>;
+        // This must remain fully dynamic. JSR rewrites a statically prefixed
+        // file URL into a package-relative path, but generation intentionally
+        // imports absolute consumer modules outside this published package.
+        const loaded = (await import(fileUrl)) as Record<string, unknown>;
         if (!(moduleExport in loaded)) {
             throw new StaticRegistryError(
                 "missing-export",
