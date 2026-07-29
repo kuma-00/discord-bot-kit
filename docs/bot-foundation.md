@@ -13,6 +13,17 @@ handlerへ渡します。
 `groupId`を宣言し、Registryが親builderへの追加と実行経路を自動合成します。
 カテゴリなどの表示情報は任意metadataであり、bot-kitは固定値を持ちません。
 
+`createHelpEmbeds`はRegistry内のChat Input Command、Subcommand、Subcommand Groupを
+`metadata.category`ごとにまとめたHelp Embed群を生成します。各項目は親Commandと
+Subcommand Groupを含む完全な呼び出しパスで表示されます。
+`metadata.hidden: true`とContext Menu Commandは除外されます。表示する説明は
+`metadata.description`を優先し、未指定時はDiscord builderのdescriptionを使います。
+タイトル、本文、footer、timestamp、未分類カテゴリ名はoptionsで変更できます。
+Discord Embedのフィールド数・フィールド長・合計文字数の上限を超える内容は、
+フィールドまたは複数Embedへ定義順のまま分割されます。単一項目や表示設定が個別の
+文字数上限を超える場合は末尾を省略します。Discordの合計文字数上限はメッセージ単位
+なので、返されたEmbedは1件ずつ別のメッセージとして送信します。
+
 ## 静的Registry生成
 
 利用側の生成スクリプトから`generateBotRegistry`を呼びます。generatorは

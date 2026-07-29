@@ -16,6 +16,7 @@ import {
     CommandDispatcher,
     checkBotRegistry,
     createBotRegistry,
+    createHelpEmbeds,
     DiscordBot,
     defineGuildCommand,
     generateBotRegistry,
@@ -202,6 +203,185 @@ describe("command registry", () => {
         expect(
             (root.builder.toJSON() as { options?: unknown[] }).options,
         ).toHaveLength(0);
+    });
+});
+
+describe("help embed", () => {
+    test("groups visible chat-input definitions and resolves descriptions", () => {
+        const group: BotCommand = {
+            kind: "subcommand-group",
+            id: "admin",
+            parentId: "queue",
+            metadata: { category: "Queue" },
+            builder: (builder) =>
+                builder.setName("admin").setDescription("Admin commands"),
+        };
+        const child: Extract<BotCommand, { kind: "subcommand" }> = {
+            ...(subcommand() as Extract<BotCommand, { kind: "subcommand" }>),
+            groupId: "admin",
+            metadata: {
+                category: "Queue",
+                description: "Metadata description",
+            },
+        };
+        const hidden: BotCommand = {
+            kind: "chat-input",
+            id: "hidden",
+            metadata: { hidden: true },
+            builder: new SlashCommandBuilder()
+                .setName("hidden")
+                .setDescription("Hidden command"),
+        };
+        const contextMenu: BotCommand = {
+            kind: "context-menu",
+            id: "Inspect",
+            metadata: { category: "Other" },
+            builder: new ContextMenuCommandBuilder()
+                .setName("Inspect")
+                .setType(ApplicationCommandType.User),
+            execute: () => {},
+        };
+        const root = {
+            ...rootCommand(),
+            metadata: { category: "Queue" },
+        } satisfies BotCommand;
+        const [embedBuilder] = createHelpEmbeds(
+            createBotRegistry([root, group, child, hidden, contextMenu]),
+        );
+        if (!embedBuilder) throw new Error("Expected a help embed");
+        const embed = embedBuilder.toJSON();
+
+        expect(embed.title).toBe("コマンド一覧");
+        expect(embed.description).toBe("説明");
+        expect(embed.timestamp).toBeDefined();
+        expect(embed.fields).toEqual([
+            {
+                name: "**3 · Queue**",
+                value: [
+                    "`/queue` : Manage the queue",
+                    "`/queue admin` : Admin commands",
+                    "`/queue admin remove` : Metadata description",
+                ].join("\n"),
+            },
+        ]);
+    });
+
+    test("supports uncategorized and presentation overrides", () => {
+        const timestamp = new Date("2026-01-02T03:04:05.000Z");
+        const [embedBuilder] = createHelpEmbeds(
+            createBotRegistry([rootCommand()]),
+            {
+                title: "Help",
+                description: "Available commands",
+                footer: {
+                    text: "Example Bot",
+                    iconURL: "https://example.com/bot.png",
+                },
+                timestamp,
+                uncategorizedLabel: "Misc",
+            },
+        );
+        const embed = embedBuilder?.toJSON();
+
+        expect(embed).toMatchObject({
+            title: "Help",
+            description: "Available commands",
+            footer: {
+                text: "Example Bot",
+                icon_url: "https://example.com/bot.png",
+            },
+            timestamp: timestamp.toISOString(),
+            fields: [
+                {
+                    name: "**1 · Misc**",
+                    value: "`/queue` : Manage the queue",
+                },
+            ],
+        });
+    });
+
+    test("creates a help embed for an empty registry without a timestamp", () => {
+        expect(
+            createHelpEmbeds(createBotRegistry([]), {
+                timestamp: null,
+            })[0]?.toJSON(),
+        ).toEqual({
+            title: "コマンド一覧",
+            description: "説明",
+        });
+    });
+
+    test("splits categories across valid embeds", () => {
+        const commands = Array.from(
+            { length: 26 },
+            (_, index): BotCommand => ({
+                kind: "chat-input",
+                id: `command-${index}`,
+                metadata: { category: `Category ${index}` },
+                builder: new SlashCommandBuilder()
+                    .setName(`command-${index}`)
+                    .setDescription("Description"),
+            }),
+        );
+
+        const embeds = createHelpEmbeds(createBotRegistry(commands));
+
+        expect(embeds).toHaveLength(2);
+        expect(embeds.map((embed) => embed.toJSON().fields?.length)).toEqual([
+            25, 1,
+        ]);
+        expect(embeds[0]?.toJSON().title).toBe("コマンド一覧 (1/2)");
+        expect(embeds[1]?.toJSON().title).toBe("コマンド一覧 (2/2)");
+    });
+
+    test("splits long categories into fields within Discord limits", () => {
+        const commands = Array.from(
+            { length: 12 },
+            (_, index): BotCommand => ({
+                kind: "chat-input",
+                id: `command-${index}`,
+                metadata: { category: "All" },
+                builder: new SlashCommandBuilder()
+                    .setName(`command-${index}`)
+                    .setDescription("x".repeat(100)),
+            }),
+        );
+
+        const [embed] = createHelpEmbeds(createBotRegistry(commands));
+        const json = embed?.toJSON();
+
+        expect(json?.fields).toHaveLength(2);
+        expect(
+            json?.fields?.every(
+                (field) =>
+                    field.name.length <= 256 && field.value.length <= 1_024,
+            ),
+        ).toBe(true);
+    });
+
+    test("bounds presentation metadata and total embed content", () => {
+        const [embed] = createHelpEmbeds(createBotRegistry([rootCommand()]), {
+            title: "t".repeat(300),
+            description: "d".repeat(5_000),
+            footer: { text: "f".repeat(3_000) },
+            uncategorizedLabel: "c".repeat(300),
+        });
+        const json = embed?.toJSON();
+        const totalLength =
+            (json?.title?.length ?? 0) +
+            (json?.description?.length ?? 0) +
+            (json?.footer?.text.length ?? 0) +
+            (json?.fields ?? []).reduce(
+                (total, field) =>
+                    total + field.name.length + field.value.length,
+                0,
+            );
+
+        expect(json?.title?.length).toBeLessThanOrEqual(256);
+        expect(json?.description?.length).toBeLessThanOrEqual(4_096);
+        expect(json?.footer?.text.length).toBeLessThanOrEqual(2_048);
+        expect(json?.fields?.[0]?.name.length).toBeLessThanOrEqual(256);
+        expect(totalLength).toBeLessThanOrEqual(6_000);
     });
 });
 

@@ -26,6 +26,7 @@ export {
     type GenerateBotRegistryResult,
     generateBotRegistry,
 } from "./generator.ts";
+export { createHelpEmbeds, type HelpEmbedOptions } from "./help.ts";
 export { createDiscordBot, DiscordBot } from "./lifecycle.ts";
 export { type BotRegistry, createBotRegistry } from "./registry.ts";
 export type {

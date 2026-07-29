@@ -43,3 +43,23 @@ await createGeneratedDiscordBot({
     clientOptions: { intents: [GatewayIntentBits.Guilds] },
 }).start();
 ```
+
+Registryからカテゴリ別のHelp Embedも生成できます。`metadata.hidden: true`のCommandと
+Context Menu Commandは表示されません。説明は`metadata.description`が優先され、
+未指定の場合はDiscord builderのdescriptionが使われます。
+
+```ts
+import { createHelpEmbeds } from "@kuma-00/bot-kit-bot";
+import { botRegistry } from "./generated/bot.ts";
+
+const embeds = createHelpEmbeds(botRegistry, {
+    footer: {
+        text: client.user?.username ?? "",
+        iconURL: client.user?.displayAvatarURL(),
+    },
+});
+
+for (const embed of embeds) {
+    await interaction.followUp({ embeds: [embed] });
+}
+```
