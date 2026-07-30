@@ -1,4 +1,5 @@
 import {
+    type Client,
     type RESTPostAPIApplicationCommandsJSONBody,
     SlashCommandSubcommandBuilder,
     SlashCommandSubcommandGroupBuilder,
@@ -8,13 +9,17 @@ import { RegistryValidationError } from "./errors.ts";
 import type { BotCommand, BotEvent } from "./types.ts";
 
 /** Validated command lookup tables, event handlers, and Discord REST payloads. */
-export interface BotRegistry {
+export interface BotRegistry<TClient extends Client = Client> {
     readonly definitions: readonly BotCommand[];
     readonly rootCommands: ReadonlyMap<string, BotCommand>;
     readonly executableCommands: ReadonlyMap<string, BotCommand>;
-    readonly events: readonly BotEvent[];
+    readonly events: readonly BotEvent<TClient>[];
     readonly applicationCommands: readonly RESTPostAPIApplicationCommandsJSONBody[];
 }
+
+/** Extracts the Discord client type carried by a bot registry. */
+export type BotRegistryClient<TRegistry> =
+    TRegistry extends BotRegistry<infer TClient> ? TClient : never;
 
 function normalizedId(id: string, label: string): string {
     const value = id.trim().toLowerCase();
@@ -66,10 +71,10 @@ function appendApplicationCommandOption(
  *
  * @throws {RegistryValidationError} For duplicates, invalid parents, or builder mismatches.
  */
-export function createBotRegistry(
+export function createBotRegistry<TClient extends Client = Client>(
     definitions: readonly BotCommand[],
-    events: readonly BotEvent[] = [],
-): BotRegistry {
+    events: readonly BotEvent<TClient>[] = [],
+): BotRegistry<TClient> {
     const byKey = new Map<string, BotCommand>();
     const roots = new Map<string, BotCommand>();
     const applicationCommandById = new Map<

@@ -35,12 +35,13 @@ await generateBotRegistry({
 ```
 
 ```ts
-import { GatewayIntentBits } from "discord.js";
+import { Client, GatewayIntentBits } from "discord.js";
 import { createGeneratedDiscordBot } from "./generated/bot.ts";
 
 await createGeneratedDiscordBot({
     token: process.env.DISCORD_TOKEN!,
     clientOptions: { intents: [GatewayIntentBits.Guilds] },
+    clientFactory: (options) => new Client(options),
 }).start();
 ```
 

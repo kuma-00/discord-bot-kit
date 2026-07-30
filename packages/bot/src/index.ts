@@ -17,7 +17,11 @@ export {
     ExecutionTimeoutError,
     RegistryValidationError,
 } from "./errors.ts";
-export { defineEvent } from "./events.ts";
+export {
+    createEventDefinition,
+    defineEvent,
+    type EventDefinitionFactory,
+} from "./events.ts";
 export {
     type BotRegistryGeneratorConfig,
     buildBotRegistryModule,
@@ -28,7 +32,11 @@ export {
 } from "./generator.ts";
 export { createHelpEmbeds, type HelpEmbedOptions } from "./help.ts";
 export { createDiscordBot, DiscordBot } from "./lifecycle.ts";
-export { type BotRegistry, createBotRegistry } from "./registry.ts";
+export {
+    type BotRegistry,
+    type BotRegistryClient,
+    createBotRegistry,
+} from "./registry.ts";
 export type {
     BotCommand,
     BotErrorContext,

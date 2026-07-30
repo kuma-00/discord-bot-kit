@@ -292,6 +292,7 @@ export async function buildBotRegistryModule(
 import {
     createBotRegistry,
     createDiscordBot as createRuntimeDiscordBot,
+    type BotRegistryClient,
     type DiscordBotRuntimeOptions,
 } from "${BOT_PACKAGE_NAME}";
 ${[...commands.imports, ...events.imports].join("\n")}
@@ -302,7 +303,7 @@ export const botRegistry = createBotRegistry([${commands.identifiers.join(", ")}
 export const applicationCommands = botRegistry.applicationCommands;
 /** Creates a Discord bot bound to the generated registry. */
 export const createGeneratedDiscordBot = (
-    options: DiscordBotRuntimeOptions,
+    options: DiscordBotRuntimeOptions<BotRegistryClient<typeof botRegistry>>,
 ) => createRuntimeDiscordBot(botRegistry, options);
 `;
     return {

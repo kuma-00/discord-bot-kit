@@ -16,7 +16,7 @@ import type {
 /** Dependencies and default execution policy used by a command dispatcher. */
 export interface CommandDispatcherOptions<TClient extends Client> {
     readonly client: TClient;
-    readonly registry: BotRegistry;
+    readonly registry: BotRegistry<TClient>;
     readonly execution?: ExecutionPolicy | undefined;
     readonly onError?: BotErrorHandler;
     readonly tracker?: OperationTracker;

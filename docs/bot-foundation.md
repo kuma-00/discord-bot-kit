@@ -60,5 +60,14 @@ chat-input commandには`defineGlobalCommand`と`defineGuildCommand`も使用で
 実行中処理をabortしてsettleを待ち、最後にclientをdestroyします。同じDiscord eventに
 複数handlerを登録でき、handler IDだけが一意である必要があります。
 
+Discord.jsの`Client`を継承した利用側Clientでは
+`createEventDefinition<TClient>()`でEvent定義helperを作成します。Event名から
+`ClientEvents`の引数tupleを推論し、同じClient型を`BotRegistry<TClient>`、
+runtime handler、生成済みbot factoryの`clientFactory`まで保持します。標準`Client`では
+従来どおり`defineEvent`を使用できます。
+
+標準`Client`と派生Clientのどちらでも、runtimeへ渡す`clientFactory`は必須です。
+bot-kitはClientの具体型を推測して生成せず、factoryが返したinstanceのlifecycleを管理します。
+
 音声connection、Player、Guild runtime、DB、個別Command、Application CommandのREST同期は
 利用側の責務です。

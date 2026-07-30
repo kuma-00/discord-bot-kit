@@ -180,20 +180,22 @@ export type BotCommand =
     | GuildContextMenuCommand;
 
 /** Static Discord event handler with optional timeout and once semantics. */
-export interface BotEvent<
+export type BotEvent<
     TClient extends Client = Client,
     TEvent extends keyof ClientEvents = keyof ClientEvents,
-> {
-    readonly id: string;
-    readonly event: TEvent;
-    readonly once?: boolean;
-    readonly timeoutMs?: number;
-    readonly execute: (
-        client: TClient,
-        args: ClientEvents[TEvent],
-        context: ExecutionContext,
-    ) => Promise<void> | void;
-}
+> = TEvent extends keyof ClientEvents
+    ? {
+          readonly id: string;
+          readonly event: TEvent;
+          readonly once?: boolean;
+          readonly timeoutMs?: number;
+          readonly execute: (
+              client: TClient,
+              args: ClientEvents[TEvent],
+              context: ExecutionContext,
+          ) => Promise<void> | void;
+      }
+    : never;
 
 /** Structured outcome returned after attempting interaction dispatch. */
 export type DispatchResult =
@@ -224,11 +226,16 @@ export type BotErrorHandler = (
     context: BotErrorContext,
 ) => Promise<void> | void;
 
-/** Client construction, credentials, logging, and execution defaults. */
+/**
+ * Client construction, credentials, logging, and execution defaults.
+ *
+ * The factory is required so the runtime client always matches the client type
+ * promised by commands, events, and the registry.
+ */
 export interface DiscordBotRuntimeOptions<TClient extends Client = Client> {
     readonly token: string;
     readonly clientOptions: ClientOptions;
-    readonly clientFactory?: (options: ClientOptions) => TClient;
+    readonly clientFactory: (options: ClientOptions) => TClient;
     readonly logger?: BotLogger;
     readonly onError?: BotErrorHandler;
     readonly execution?: ExecutionPolicy | undefined;

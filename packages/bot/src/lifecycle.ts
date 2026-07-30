@@ -1,5 +1,5 @@
 import {
-    Client,
+    type Client,
     type ClientEvents,
     Events,
     type Interaction,
@@ -32,13 +32,10 @@ export class DiscordBot<TClient extends Client = Client> {
     private registered = false;
 
     constructor(
-        readonly registry: BotRegistry,
+        readonly registry: BotRegistry<TClient>,
         private readonly options: DiscordBotRuntimeOptions<TClient>,
     ) {
-        this.client = (
-            options.clientFactory ??
-            ((clientOptions) => new Client(clientOptions) as TClient)
-        )(options.clientOptions);
+        this.client = options.clientFactory(options.clientOptions);
         this.dispatcher = new CommandDispatcher({
             client: this.client,
             registry,
@@ -123,9 +120,14 @@ export class DiscordBot<TClient extends Client = Client> {
             const listener = (
                 ...args: ClientEvents[typeof definition.event]
             ) => {
+                const execute = definition.execute as (
+                    client: TClient,
+                    args: ClientEvents[typeof definition.event],
+                    context: { readonly signal: AbortSignal },
+                ) => Promise<void> | void;
                 void this.tracker
                     .run(definition.id, definition.timeoutMs, (signal) =>
-                        definition.execute(this.client, args, { signal }),
+                        execute(this.client, args, { signal }),
                     )
                     .catch((error) =>
                         this.handleError(error, {
@@ -215,7 +217,7 @@ export class DiscordBot<TClient extends Client = Client> {
 
 /** Creates a lifecycle-managed Discord bot for a validated registry. */
 export function createDiscordBot<TClient extends Client = Client>(
-    registry: BotRegistry,
+    registry: BotRegistry<TClient>,
     options: DiscordBotRuntimeOptions<TClient>,
 ): DiscordBot<TClient> {
     return new DiscordBot(registry, options);

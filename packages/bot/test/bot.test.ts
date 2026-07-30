@@ -953,6 +953,9 @@ describe("registry generator", () => {
         expect(built.content.indexOf("commands/a.ts")).toBeLessThan(
             built.content.indexOf("commands/b.ts"),
         );
+        expect(built.content).toContain(
+            "DiscordBotRuntimeOptions<BotRegistryClient<typeof botRegistry>>",
+        );
         const result = await generateBotRegistry(config);
         expect(result.changed).toBe(true);
         expect((await checkBotRegistry(config)).changed).toBe(false);
