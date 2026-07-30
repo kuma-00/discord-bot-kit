@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0](https://github.com/kuma-00/discord-bot-kit/compare/v1.1.0...v1.2.0) (2026-07-30)
+
+
+### Features
+
+* add categorized help embed generation ([fabcc03](https://github.com/kuma-00/discord-bot-kit/commit/fabcc0368f3ed39b89646f7c578096511b9467b0))
+* support typed Discord client subclasses in bot runtime ([0c0fb38](https://github.com/kuma-00/discord-bot-kit/commit/0c0fb388d6fa27425a3070484bdddb0342488bc2))
+
 ## [1.1.0](https://github.com/kuma-00/discord-bot-kit/compare/v1.0.0...v1.1.0) (2026-07-28)
 
 
