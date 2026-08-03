@@ -22,10 +22,11 @@ parsing, schema failure, and secret redaction.
 
 1. Define `BotCommand` and `BotEvent` values with static imports.
 2. Pass explicit command and event arrays to `createDiscordBot`.
-3. Supply only the required Discord intents and inject a logger and error
-   handler that do not expose secrets.
+3. Supply the required `clientFactory`, only the required Discord intents, and
+   a logger and error handler that do not expose secrets.
 4. Start once during application startup and call `stop` during shutdown.
-5. Inject `clientFactory` in tests to avoid connecting to Discord.
+5. Inject a fake client through `clientFactory` in tests to avoid connecting to
+   Discord.
 
 Remember that chat input commands defer by default, autocomplete has a separate
 path, registry IDs are normalized, and duplicates are rejected. Keep voice,
@@ -35,6 +36,9 @@ queues, persistence, and command domain logic outside the library.
 
 1. Define input, success, and error schemas near a `defineHttpContract` call in
    a shared consumer module.
+   The success schema describes `ApiResult.data`; the error schema describes
+   `ApiResult.error.details`. Do not wrap either schema in the `ApiResult`
+   envelope.
 2. Pair the contract with a framework-neutral handler through `defineRoute`.
 3. Execute and validate the route with backend helpers. Keep domain services
    behind consumer-defined ports.
@@ -61,15 +65,18 @@ Do not place Elysia types in shared contracts or backend domain handlers.
 1. Construct `HttpClient` with the base URL, timeout, headers, and optional API
    key appropriate to the environment.
 2. Call `request` with the same `HttpContract` used by the backend and handle
-   both branches of `ApiResult`.
+   both branches of `ApiResult`. `executeRoute` and `HttpClient` own the
+   standard success and failure envelopes.
 3. Pass an `AbortSignal` from request ownership, such as navigation or
    component cleanup.
 4. Use `FrontendApiClient` when UI-neutral frontend composition is useful; use
    `HttpClient` directly when state management adds no value.
 5. Keep domain-specific state and rendering in the consumer.
 
-Test contract input rejection, success validation, typed HTTP errors, invalid
-responses, network failure, timeout, and caller cancellation.
+Test contract input rejection, success-data validation, typed error-details
+validation, malformed or invalid envelopes, network failure, timeout, and
+caller cancellation. Include at least one test that connects `executeRoute`
+directly to `HttpClient` through an injected Fetch implementation.
 
 ## SSE and Realtime State
 

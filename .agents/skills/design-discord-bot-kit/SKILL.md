@@ -106,6 +106,16 @@ unrelated dependency or framework into an existing package.
   Inspect the JSR dry-run file list and warnings before considering publication
   validation complete.
 
+## Consumer Skill Maintenance
+
+`use-discord-bot-kit` is the consumer-facing skill for applications that use
+the published libraries. Whenever a public API, runtime contract, required
+option, response shape, lifecycle rule, or recommended integration workflow
+changes, review and update `.agents/skills/use-discord-bot-kit/SKILL.md` and its
+applicable references in the same change. Keep that skill aligned with the
+latest supported library behavior, while preserving its rule to inspect the
+consumer's installed package version as the primary source of truth.
+
 ## Design Guardrails
 
 - Support Bun as the only guaranteed runtime.

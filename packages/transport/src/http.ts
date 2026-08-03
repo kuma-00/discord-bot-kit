@@ -158,20 +158,46 @@ export class HttpClient {
                         : { body: JSON.stringify(serialized.body) }),
                 },
             );
-            const payload = await response.json().catch(() => undefined);
+            let payload: unknown;
+            let jsonCause: unknown;
+            try {
+                payload = await response.json();
+            } catch (cause) {
+                jsonCause = cause;
+            }
             if (!response.ok) {
                 try {
-                    const data = (await parseSchema(
+                    if (
+                        typeof payload !== "object" ||
+                        payload === null ||
+                        (payload as { ok?: unknown }).ok !== false
+                    ) {
+                        throw new Error("Invalid API failure envelope");
+                    }
+                    const envelopeError = (payload as { error?: unknown })
+                        .error;
+                    if (
+                        typeof envelopeError !== "object" ||
+                        envelopeError === null ||
+                        typeof (envelopeError as { code?: unknown }).code !==
+                            "string" ||
+                        typeof (envelopeError as { message?: unknown })
+                            .message !== "string"
+                    ) {
+                        throw new Error("Invalid API failure envelope");
+                    }
+                    const details = (await parseSchema(
                         contract.error,
-                        payload,
+                        (envelopeError as { details?: unknown }).details,
                         `${contract.id}.error`,
                     )) as SchemaOutput<TErrorSchema>;
                     return {
                         ok: false,
                         error: {
-                            code: "http-error",
-                            message: `HTTP ${response.status}`,
-                            details: data,
+                            code: (envelopeError as { code: string }).code,
+                            message: (envelopeError as { message: string })
+                                .message,
+                            details,
                         },
                     };
                 } catch (cause) {
@@ -181,17 +207,25 @@ export class HttpClient {
                         {
                             kind: "invalid-response",
                             status: response.status,
-                            cause,
+                            cause: jsonCause ?? cause,
                         },
                     );
                 }
             }
             try {
+                if (
+                    typeof payload !== "object" ||
+                    payload === null ||
+                    (payload as { ok?: unknown }).ok !== true ||
+                    !("data" in payload)
+                ) {
+                    throw new Error("Invalid API success envelope");
+                }
                 return {
                     ok: true,
                     data: (await parseSchema(
                         contract.output,
-                        payload,
+                        (payload as { data: unknown }).data,
                         `${contract.id}.output`,
                     )) as SchemaOutput<TOutputSchema>,
                 };
@@ -202,7 +236,7 @@ export class HttpClient {
                     {
                         kind: "invalid-response",
                         status: response.status,
-                        cause,
+                        cause: jsonCause ?? cause,
                     },
                 );
             }

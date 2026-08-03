@@ -26,8 +26,13 @@ replace validated behavior with unchecked casts or copied internals.
    mapping failed.
 2. Confirm that client and server use equivalent contract definitions.
 3. Verify params, query, and body serialization separately.
-4. Remove unsafe casts that hide Standard Schema failures.
-5. Ensure unexpected errors map to safe responses and server-side diagnostics.
+4. Inspect the raw JSON as an `ApiResult` envelope. Validate only success
+   `data` with the output schema and failure `error.details` with the error
+   schema; do not apply either schema to the whole envelope.
+5. If a valid backend response is reported as `invalid-response`, confirm that
+   backend and transport package versions agree on envelope handling.
+6. Remove unsafe casts that hide Standard Schema failures.
+7. Ensure unexpected errors map to safe responses and server-side diagnostics.
 
 ## Transport Failure
 

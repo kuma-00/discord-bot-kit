@@ -14,7 +14,10 @@ interface HttpRequestInput {
 }
 ```
 
-`HttpClient`はpath parameter、query、JSON bodyを組み立て、timeout、abort、header、API keyを処理します。HTTP成功・エラーのどちらも契約schemaで検証し、networkや不正responseは`TransportFailureDetails`へ変換します。
+`HttpClient`はpath parameter、query、JSON bodyを組み立て、timeout、abort、header、API keyを処理します。HTTP responseは標準`ApiResult`
+envelopeとして解釈し、成功時は`data`をcontractのoutput schema、契約に定義された
+失敗時は`error.details`をerror schemaで検証します。JSON、envelope、data、error
+detailsの不正、network、timeout、abortは`TransportFailureDetails`へ変換します。
 
 ## Backend
 

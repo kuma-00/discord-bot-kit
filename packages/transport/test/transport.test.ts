@@ -32,6 +32,13 @@ const errorSchema = schema<{ reason: string }>(
         value !== null &&
         typeof (value as { reason?: unknown }).reason === "string",
 );
+const optionalErrorSchema = schema<{ reason: string } | undefined>(
+    (value): value is { reason: string } | undefined =>
+        value === undefined ||
+        (typeof value === "object" &&
+            value !== null &&
+            typeof (value as { reason?: unknown }).reason === "string"),
+);
 const route = defineHttpContract({
     id: "update",
     method: "POST",
@@ -49,7 +56,7 @@ describe("HttpClient", () => {
             apiKey: "key",
             fetch: async (input, init) => {
                 captured = new Request(input, init);
-                return Response.json({ id: "42" });
+                return Response.json({ ok: true, data: { id: "42" } });
             },
         });
         const result = await client.request(route, {
@@ -66,23 +73,114 @@ describe("HttpClient", () => {
     test("returns typed HTTP and invalid-response failures", async () => {
         const typed = new HttpClient({
             baseUrl: "https://example.test",
-            fetch: async () => Response.json({ reason: "no" }, { status: 400 }),
+            fetch: async () =>
+                Response.json(
+                    {
+                        ok: false,
+                        error: {
+                            code: "declined",
+                            message: "No",
+                            details: { reason: "no" },
+                        },
+                    },
+                    { status: 400 },
+                ),
         });
         expect(await typed.request(route, { params: { id: "1" } })).toEqual({
             ok: false,
             error: {
-                code: "http-error",
-                message: "HTTP 400",
+                code: "declined",
+                message: "No",
                 details: { reason: "no" },
             },
         });
         const invalid = new HttpClient({
             baseUrl: "https://example.test",
-            fetch: async () => Response.json({ unexpected: true }),
+            fetch: async () =>
+                Response.json({ ok: true, data: { unexpected: true } }),
         });
         const result = await invalid.request(route, { params: { id: "1" } });
         expect(result.ok).toBe(false);
         if (!result.ok) expect(result.error.code).toBe("invalid-response");
+    });
+
+    test("rejects malformed and mismatched API envelopes", async () => {
+        const cases: Array<
+            [string, Response, "invalid-response" | "invalid-error-response"]
+        > = [
+            [
+                "malformed success JSON",
+                new Response("not-json"),
+                "invalid-response",
+            ],
+            [
+                "invalid success envelope",
+                Response.json({ ok: false, error: {} }),
+                "invalid-response",
+            ],
+            [
+                "invalid error envelope",
+                Response.json({ ok: true, data: { id: "1" } }, { status: 400 }),
+                "invalid-error-response",
+            ],
+            [
+                "invalid error details",
+                Response.json(
+                    {
+                        ok: false,
+                        error: { code: "x", message: "X", details: {} },
+                    },
+                    { status: 400 },
+                ),
+                "invalid-error-response",
+            ],
+        ];
+        for (const [, response, code] of cases) {
+            const client = new HttpClient({
+                baseUrl: "https://example.test",
+                fetch: async () => response,
+            });
+            const result = await client.request(route, { params: { id: "1" } });
+            expect(result.ok).toBe(false);
+            if (!result.ok) {
+                expect(result.error.code).toBe(code);
+                expect(result.error.details).toMatchObject({
+                    kind: "invalid-response",
+                    status: code === "invalid-error-response" ? 400 : 200,
+                });
+            }
+        }
+    });
+
+    test("validates success data separately from its envelope", async () => {
+        const client = new HttpClient({
+            baseUrl: "https://example.test",
+            fetch: async () => Response.json({ ok: true, data: { id: 1 } }),
+        });
+        const result = await client.request(route, { params: { id: "1" } });
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error.code).toBe("invalid-response");
+    });
+
+    test("accepts failure envelopes without details when the contract allows undefined", async () => {
+        const optionalRoute = defineHttpContract({
+            ...route,
+            error: optionalErrorSchema,
+        });
+        const client = new HttpClient({
+            baseUrl: "https://example.test",
+            fetch: async () =>
+                Response.json(
+                    { ok: false, error: { code: "empty", message: "Empty" } },
+                    { status: 400 },
+                ),
+        });
+        expect(
+            await client.request(optionalRoute, { params: { id: "1" } }),
+        ).toEqual({
+            ok: false,
+            error: { code: "empty", message: "Empty", details: undefined },
+        });
     });
 
     test("aborts timed out requests", async () => {
