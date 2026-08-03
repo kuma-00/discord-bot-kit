@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/kuma-00/discord-bot-kit/compare/v1.2.0...v1.2.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* validate standard API envelopes in HTTP client ([b05a3a7](https://github.com/kuma-00/discord-bot-kit/commit/b05a3a7473d176e020df8539cd4c47192c008d7f))
+
 ## [1.2.0](https://github.com/kuma-00/discord-bot-kit/compare/v1.1.0...v1.2.0) (2026-07-30)
 
 
