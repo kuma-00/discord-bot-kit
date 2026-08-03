@@ -145,7 +145,7 @@ export function createBotRegistry<TClient extends Client = Client>(
         if (command.kind !== "subcommand") continue;
         const parentId = normalizedId(command.parentId, "Parent command");
         const parent = roots.get(parentId);
-        if (!parent || parent.kind !== "chat-input") continue;
+        if (parent?.kind !== "chat-input") continue;
         const builder = command.builder(new SlashCommandSubcommandBuilder());
         assertBuilderName(command, builder.toJSON().name);
         if (command.groupId) {

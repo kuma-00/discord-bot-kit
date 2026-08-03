@@ -215,7 +215,7 @@ describe("grouped static registry generator", () => {
             ],
         });
         expect(Object.hasOwn(built.entryCounts, "__proto__")).toBe(true);
-        expect(built.entryCounts.__proto__).toBe(1);
+        expect(Reflect.get(built.entryCounts, "__proto__")).toBe(1);
     });
 
     test("generates grouped output and detects stale content", async () => {

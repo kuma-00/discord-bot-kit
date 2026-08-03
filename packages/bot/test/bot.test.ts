@@ -137,10 +137,10 @@ describe("command registry", () => {
         );
         expect(
             (
-                registry.applicationCommands[0]?.options?.[0] as {
-                    options?: unknown[];
-                }
-            ).options,
+                registry.applicationCommands[0]?.options?.[0] as
+                    | { options?: unknown[] }
+                    | undefined
+            )?.options,
         ).toHaveLength(1);
     });
 
