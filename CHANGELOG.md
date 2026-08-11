@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0](https://github.com/kuma-00/discord-bot-kit/compare/v1.2.1...v1.3.0) (2026-08-11)
+
+
+### Features
+
+* add multipart form upload support ([58fee91](https://github.com/kuma-00/discord-bot-kit/commit/58fee913a3c42ee0d8506e1b4b1e39c3e982f8ce))
+* add safe configuration error diagnostics ([904fdc0](https://github.com/kuma-00/discord-bot-kit/commit/904fdc07bf1c76a99e757aa463c0a57fb346058e))
+
+
+### Bug Fixes
+
+* enforce multipart payload limits and classify request input errors ([ecdcc13](https://github.com/kuma-00/discord-bot-kit/commit/ecdcc1350c92d8ba39e8b729065606831ad149ee))
+
 ## [1.2.1](https://github.com/kuma-00/discord-bot-kit/compare/v1.2.0...v1.2.1) (2026-08-03)
 
 
