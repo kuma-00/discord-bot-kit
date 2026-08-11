@@ -77,7 +77,7 @@ describe("backend core", () => {
         expect(invalid.status).toBe(400);
         expect(await invalid.json()).toMatchObject({
             ok: false,
-            error: { code: "invalid-multipart" },
+            error: { code: "invalid-multipart", kind: "request-input" },
         });
 
         const form = new FormData();
@@ -93,8 +93,193 @@ describe("backend core", () => {
         expect(oversized.status).toBe(413);
         expect(await oversized.json()).toMatchObject({
             ok: false,
+            error: { code: "payload-too-large", kind: "request-input" },
+        });
+    });
+
+    test("maps structurally invalid multipart maxBytes to safe 500 without calling handler", async () => {
+        let called = false;
+        const response = await executeRoute(
+            defineRoute({
+                contract: {
+                    id: "invalid-config",
+                    method: "POST",
+                    path: "/upload",
+                    requestBody: {
+                        encoding: "multipart/form-data",
+                        maxBytes: Number.NaN,
+                    },
+                    input: objectSchema,
+                    output: objectSchema,
+                    error: objectSchema,
+                },
+                handler: () => {
+                    called = true;
+                    return { ok: true, data: {} };
+                },
+            }),
+            new Request("https://example.test/upload", {
+                method: "POST",
+                headers: { "content-type": "multipart/form-data" },
+            }),
+            {},
+        );
+        expect(response.status).toBe(500);
+        expect(called).toBe(false);
+    });
+
+    test("rejects oversized encoded multipart bodies without content-length", async () => {
+        const boundary = "----boundary";
+        const encoded =
+            `--${boundary}\r\n` +
+            `Content-Disposition: form-data; name="value"; filename="${"x".repeat(128)}"\r\n` +
+            `Content-Type: application/octet-stream\r\n\r\n` +
+            `x\r\n--${boundary}--\r\n`;
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(new TextEncoder().encode(encoded));
+                controller.close();
+            },
+        });
+        const contract = defineHttpContract({
+            id: "encoded-limit",
+            method: "POST",
+            path: "/upload",
+            requestBody: { encoding: "multipart/form-data", maxBytes: 32 },
+            input: objectSchema,
+            output: objectSchema,
+            error: objectSchema,
+        });
+        const response = await executeRoute(
+            defineRoute({
+                contract,
+                handler: ({ input }) => ({ ok: true, data: input }),
+            }),
+            new Request("https://example.test/upload", {
+                method: "POST",
+                headers: {
+                    "content-type": `multipart/form-data; boundary=${boundary}`,
+                },
+                body: stream,
+                duplex: "half",
+            } as RequestInit),
+            {},
+        );
+        expect(response.status).toBe(413);
+        expect(await response.json()).toMatchObject({
+            ok: false,
             error: { code: "payload-too-large" },
         });
+    });
+
+    test("returns 413 promptly when oversized stream cancellation never settles", async () => {
+        let cancelCalled = false;
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(new TextEncoder().encode("too-large"));
+            },
+            cancel() {
+                cancelCalled = true;
+                return new Promise<void>(() => {});
+            },
+        });
+        const contract = defineHttpContract({
+            id: "never-settling-cancel",
+            method: "POST",
+            path: "/upload",
+            requestBody: { encoding: "multipart/form-data", maxBytes: 4 },
+            input: objectSchema,
+            output: objectSchema,
+            error: objectSchema,
+        });
+        let handlerCalled = false;
+        const execution = executeRoute(
+            defineRoute({
+                contract,
+                handler: ({ input }) => {
+                    handlerCalled = true;
+                    return { ok: true, data: input };
+                },
+            }),
+            new Request("https://example.test/upload", {
+                method: "POST",
+                headers: {
+                    "content-type": "multipart/form-data; boundary=boundary",
+                },
+                body: stream,
+                duplex: "half",
+            } as RequestInit),
+            {},
+        );
+        const response = await Promise.race([
+            execution,
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("executeRoute hung")), 250),
+            ),
+        ]);
+        expect(response.status).toBe(413);
+        expect(await response.json()).toMatchObject({
+            ok: false,
+            error: { code: "payload-too-large" },
+        });
+        expect(cancelCalled).toBe(true);
+        expect(handlerCalled).toBe(false);
+    });
+
+    test("settles a bounded multipart read when the request is aborted", async () => {
+        let resolveReadStarted!: () => void;
+        const readStarted = new Promise<void>((resolve) => {
+            resolveReadStarted = resolve;
+        });
+        let cancelCalled = false;
+        const stream = new ReadableStream<Uint8Array>({
+            pull() {
+                resolveReadStarted();
+                return new Promise<void>(() => {});
+            },
+            cancel() {
+                cancelCalled = true;
+            },
+        });
+        const controller = new AbortController();
+        const contract = defineHttpContract({
+            id: "aborted-upload",
+            method: "POST",
+            path: "/upload",
+            requestBody: { encoding: "multipart/form-data", maxBytes: 1024 },
+            input: objectSchema,
+            output: objectSchema,
+            error: objectSchema,
+        });
+        let handlerCalled = false;
+        const execution = executeRoute(
+            defineRoute({
+                contract,
+                handler: ({ input }) => {
+                    handlerCalled = true;
+                    return { ok: true, data: input };
+                },
+            }),
+            new Request("https://example.test/upload", {
+                method: "POST",
+                headers: { "content-type": "multipart/form-data" },
+                body: stream,
+                signal: controller.signal,
+                duplex: "half",
+            } as RequestInit),
+            {},
+        );
+        await readStarted;
+        controller.abort();
+        const response = await Promise.race([
+            execution,
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("executeRoute hung")), 250),
+            ),
+        ]);
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        expect(cancelCalled).toBe(true);
+        expect(handlerCalled).toBe(false);
     });
 
     test("authenticates API keys without exposing the configured key", () => {

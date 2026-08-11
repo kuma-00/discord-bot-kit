@@ -238,6 +238,103 @@ describe("HttpClient", () => {
         });
     });
 
+    test("preserves backend input failures without validating contract details", async () => {
+        const client = new HttpClient({
+            baseUrl: "https://example.test",
+            fetch: async () =>
+                Response.json(
+                    {
+                        ok: false,
+                        error: {
+                            code: "payload-too-large",
+                            message: "Request payload is too large",
+                            kind: "request-input",
+                        },
+                    },
+                    { status: 413 },
+                ),
+        });
+        expect(await client.request(route, { params: { id: "1" } })).toEqual({
+            ok: false,
+            error: {
+                code: "payload-too-large",
+                message: "Request payload is too large",
+                details: { kind: "http", status: 413 },
+            },
+        });
+    });
+
+    test("rejects malformed request-input markers and validates unmarked same-code errors", async () => {
+        const responses = [
+            Response.json(
+                {
+                    ok: false,
+                    error: {
+                        code: "invalid-input",
+                        message: "bad",
+                        kind: "request-input",
+                    },
+                },
+                { status: 422 },
+            ),
+            Response.json(
+                {
+                    ok: false,
+                    error: {
+                        code: "invalid-input",
+                        message: "bad",
+                        kind: "other",
+                    },
+                },
+                { status: 400 },
+            ),
+            Response.json(
+                {
+                    ok: false,
+                    error: {
+                        code: "invalid-input",
+                        message: "bad",
+                        kind: "request-input",
+                        details: { reason: "ambiguous" },
+                    },
+                },
+                { status: 400 },
+            ),
+        ];
+        for (const response of responses) {
+            const result = await new HttpClient({
+                baseUrl: "https://example.test",
+                fetch: async () => response,
+            }).request(route, { params: { id: "1" } });
+            expect(result.ok).toBe(false);
+            if (!result.ok)
+                expect(result.error.code).toBe("invalid-error-response");
+        }
+        const declared = await new HttpClient({
+            baseUrl: "https://example.test",
+            fetch: async () =>
+                Response.json(
+                    {
+                        ok: false,
+                        error: {
+                            code: "invalid-input",
+                            message: "declared",
+                            details: { reason: "x" },
+                        },
+                    },
+                    { status: 400 },
+                ),
+        }).request(route, { params: { id: "1" } });
+        expect(declared).toEqual({
+            ok: false,
+            error: {
+                code: "invalid-input",
+                message: "declared",
+                details: { reason: "x" },
+            },
+        });
+    });
+
     test("aborts timed out requests", async () => {
         const client = new HttpClient({
             baseUrl: "https://example.test",

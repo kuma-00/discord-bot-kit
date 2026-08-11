@@ -23,7 +23,18 @@ Upload routeではcontractに`requestBody: { encoding: "multipart/form-data" }`�
 `body`は文字列、`Blob`/`File`、または同名フィールドの配列を受け付けます。Transportは
 `FormData`を作り、`content-type`を削除してFetchにboundary生成を委譲します。Backendは
 `formData()`を読み、単一値をscalar、反復名をarrayとして完全なinput schemaを検証します。
-`maxBytes`超過は413、content-type不正やmultipart解析失敗は安全な400です。
+`maxBytes`超過は、`Content-Length`がある場合は事前に、ない場合もmultipartの
+エンコード済みrequest bodyをストリームで読み取りながら判定して413を返します。
+content-type不正やmultipart解析失敗は安全な400です。
+`maxBytes`はmultipartでのみ指定でき、0以上の安全な整数（バイト数）でなければなりません。
+
+Backendが入力を受け付けられない場合の`invalid-input`、`invalid-multipart`、
+`payload-too-large`のenvelopeには`kind: "request-input"`を付け、契約のerror detailsを
+持たない標準エラーです。
+Transportはmarkerとcode/statusの組み合わせが正しい場合のみHTTP失敗（`{ kind: "http", status }`）としてそのまま返し、
+不正なmarkerやstatus、`details`が混在する標準エラーは`invalid-error-response`にします。
+契約のerror schemaでは検証しません。その他の宣言済み失敗は引き続き
+`error.details`を契約schemaで検証します。
 
 ## Backend
 

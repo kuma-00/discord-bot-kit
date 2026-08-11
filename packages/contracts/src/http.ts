@@ -6,14 +6,29 @@ export interface ApiSuccess<T> {
     readonly data: T;
 }
 
+/** Stable codes emitted when the framework rejects an HTTP request input. */
+export type RequestInputFailureCode =
+    | "invalid-input"
+    | "invalid-multipart"
+    | "payload-too-large";
+
 /** A serializable API failure. */
 export interface ApiFailure<TDetails = unknown> {
     readonly ok: false;
-    readonly error: {
-        readonly code: string;
-        readonly message: string;
-        readonly details?: TDetails;
-    };
+    readonly error:
+        | {
+              readonly code: string;
+              readonly message: string;
+              readonly kind?: never;
+              readonly details?: TDetails;
+          }
+        | {
+              readonly code: RequestInputFailureCode;
+              readonly message: string;
+              /** Discriminator reserved for framework-generated request failures. */
+              readonly kind: "request-input";
+              readonly details?: never;
+          };
 }
 
 /** Framework-neutral API result. */
@@ -69,5 +84,19 @@ export function defineHttpContract<
 >(
     contract: HttpContract<TInput, TOutput, TError>,
 ): HttpContract<TInput, TOutput, TError> {
+    const requestBody = contract.requestBody;
+    if (requestBody?.maxBytes !== undefined) {
+        if (requestBody.encoding !== "multipart/form-data") {
+            throw new TypeError(
+                "maxBytes is only valid for multipart/form-data",
+            );
+        }
+        if (
+            !Number.isSafeInteger(requestBody.maxBytes) ||
+            requestBody.maxBytes < 0
+        ) {
+            throw new TypeError("maxBytes must be a non-negative safe integer");
+        }
+    }
     return contract;
 }

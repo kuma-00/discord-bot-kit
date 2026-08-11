@@ -56,6 +56,26 @@ const route = defineRoute({
     },
 });
 
+const multipartContract = defineHttpContract({
+    id: "interop-upload",
+    method: "POST",
+    path: "/interop-upload",
+    requestBody: { encoding: "multipart/form-data", maxBytes: 32 },
+    input: schema<{ body?: Record<string, unknown> }>(
+        (value): value is { body?: Record<string, unknown> } =>
+            typeof value === "object" && value !== null,
+    ),
+    output,
+    error,
+});
+const multipartRoute = defineRoute({
+    contract: multipartContract,
+    handler: ({ input }) => ({
+        ok: true as const,
+        data: { value: String(input.body?.value ?? "") },
+    }),
+});
+
 const backendFetch = async (
     input: RequestInfo | URL,
     init?: RequestInit,
@@ -114,5 +134,26 @@ describe("HTTP backend/transport interoperability", () => {
                 status: 500,
             });
         }
+    });
+
+    test("preserves backend payload-too-large through the client", async () => {
+        const uploadClient = new HttpClient({
+            baseUrl: "https://example.test",
+            fetch: async (input, init) => {
+                const request = new Request(input, init);
+                return executeRoute(multipartRoute, request, {});
+            },
+        });
+        const result = await uploadClient.request(multipartContract, {
+            body: { value: "x".repeat(128) },
+        });
+        expect(result).toEqual({
+            ok: false,
+            error: {
+                code: "payload-too-large",
+                message: "Request payload is too large",
+                details: { kind: "http", status: 413 },
+            },
+        });
     });
 });

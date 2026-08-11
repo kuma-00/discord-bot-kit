@@ -15,3 +15,4 @@ repeated fields). The client removes any caller-supplied `content-type` so
 Fetch can add the boundary. Invalid input, HTTP failures, malformed responses,
 network errors, timeouts, and caller cancellation are returned as typed
 `ApiFailure` results.
+Framework input failures are bypassed only with `kind: "request-input"` and a matching code/status pair; malformed markers are `invalid-error-response`.

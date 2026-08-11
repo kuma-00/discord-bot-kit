@@ -3,20 +3,25 @@ import {
     type ApiResult,
     type HttpContract,
     parseSchema,
+    type RequestInputFailureCode,
     type SchemaOutput,
     type StandardSchemaV1,
 } from "@kuma-00/bot-kit-contracts";
 
 class RequestInputError extends Error {
     constructor(
-        readonly code:
-            | "invalid-input"
-            | "invalid-multipart"
-            | "payload-too-large",
+        readonly code: RequestInputFailureCode,
         readonly status: 400 | 413,
     ) {
         super(code);
         this.name = "RequestInputError";
+    }
+}
+
+class RequestConfigurationError extends TypeError {
+    constructor(message: string) {
+        super(message);
+        this.name = "RequestConfigurationError";
     }
 }
 
@@ -109,6 +114,7 @@ export function mapBackendError(
                         error.code === "payload-too-large"
                             ? "Request payload is too large"
                             : "Request input is invalid",
+                    kind: "request-input",
                 },
             },
             error.status,
@@ -145,36 +151,87 @@ async function readRouteInput(
     request: Request,
     rawInput: unknown,
 ): Promise<unknown> {
-    if (definition.contract.requestBody?.encoding !== "multipart/form-data") {
+    const requestBody = definition.contract.requestBody;
+    if (
+        requestBody?.maxBytes !== undefined &&
+        (requestBody.encoding !== "multipart/form-data" ||
+            !Number.isSafeInteger(requestBody.maxBytes) ||
+            requestBody.maxBytes < 0)
+    ) {
+        throw new RequestConfigurationError(
+            "Invalid request body maxBytes configuration",
+        );
+    }
+    if (requestBody?.encoding !== "multipart/form-data") {
         return rawInput;
     }
     const contentType = request.headers.get("content-type") ?? "";
     if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
         throw new RequestInputError("invalid-multipart", 400);
     }
-    const maxBytes = definition.contract.requestBody.maxBytes;
+    const maxBytes = requestBody.maxBytes;
     const contentLength = Number(request.headers.get("content-length"));
     if (maxBytes !== undefined && contentLength > maxBytes) {
         throw new RequestInputError("payload-too-large", 413);
     }
     try {
-        const form = await request.formData();
-        if (request.signal.aborted) throw request.signal.reason;
-        const body = multipartBody(form);
-        if (maxBytes !== undefined) {
-            let size = 0;
-            for (const value of form.values() as IterableIterator<
-                string | Blob
-            >) {
-                size +=
-                    typeof value === "string"
-                        ? new TextEncoder().encode(value).byteLength
-                        : value.size;
-            }
-            if (size > maxBytes) {
-                throw new RequestInputError("payload-too-large", 413);
+        let multipartRequest = request;
+        if (maxBytes !== undefined && request.body) {
+            const reader = request.body.getReader();
+            let rejectAbort: ((reason: unknown) => void) | undefined;
+            const abortPromise = new Promise<never>((_, reject) => {
+                rejectAbort = reject;
+            });
+            const cancelReader = () => {
+                try {
+                    void reader.cancel().catch(() => {
+                        // Preserve the request error if cancellation fails.
+                    });
+                } catch {
+                    // Preserve the request error if cancellation fails.
+                }
+            };
+            const onAbort = () => {
+                rejectAbort?.(request.signal.reason);
+                cancelReader();
+            };
+            request.signal.addEventListener("abort", onAbort, { once: true });
+            try {
+                if (request.signal.aborted) onAbort();
+                const readPromise = (async () => {
+                    const chunks: Uint8Array[] = [];
+                    let total = 0;
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        total += value.byteLength;
+                        if (total > maxBytes) {
+                            cancelReader();
+                            throw new RequestInputError(
+                                "payload-too-large",
+                                413,
+                            );
+                        }
+                        chunks.push(value);
+                    }
+                    const body = new Uint8Array(total);
+                    let offset = 0;
+                    for (const chunk of chunks) {
+                        body.set(chunk, offset);
+                        offset += chunk.byteLength;
+                    }
+                    return body;
+                })();
+                const body = await Promise.race([readPromise, abortPromise]);
+                multipartRequest = new Request(request, { body });
+            } finally {
+                request.signal.removeEventListener("abort", onAbort);
+                reader.releaseLock();
             }
         }
+        const form = await multipartRequest.formData();
+        if (request.signal.aborted) throw request.signal.reason;
+        const body = multipartBody(form);
         const base =
             typeof rawInput === "object" && rawInput !== null ? rawInput : {};
         return { ...base, body };
@@ -206,7 +263,11 @@ export async function executeRoute<
                 `${definition.contract.id}.input`,
             )) as SchemaOutput<TInputSchema>;
         } catch (error) {
-            if (error instanceof RequestInputError) throw error;
+            if (
+                error instanceof RequestInputError ||
+                error instanceof RequestConfigurationError
+            )
+                throw error;
             throw new RequestInputError("invalid-input", 400);
         }
         const result = await definition.handler({ request, input, params });

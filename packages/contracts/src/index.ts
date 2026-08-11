@@ -19,6 +19,7 @@ export {
     type HttpRequestBody,
     type MultipartFormBody,
     type MultipartFormValue,
+    type RequestInputFailureCode,
 } from "./http.ts";
 export {
     ContractValidationError,

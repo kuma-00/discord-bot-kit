@@ -54,6 +54,39 @@ describe("contracts", () => {
         ).toBeUndefined();
     });
 
+    test("validates multipart maxBytes metadata", () => {
+        for (const maxBytes of [
+            Number.NaN,
+            Infinity,
+            -1,
+            1.5,
+            Number.MAX_SAFE_INTEGER + 1,
+        ]) {
+            expect(() =>
+                defineHttpContract({
+                    id: "invalid",
+                    method: "POST",
+                    path: "/invalid",
+                    requestBody: { encoding: "multipart/form-data", maxBytes },
+                    input: payloadSchema,
+                    output: payloadSchema,
+                    error: payloadSchema,
+                }),
+            ).toThrow(TypeError);
+        }
+        expect(() =>
+            defineHttpContract({
+                id: "json-limit",
+                method: "POST",
+                path: "/json",
+                requestBody: { encoding: "json", maxBytes: 1 },
+                input: payloadSchema,
+                output: payloadSchema,
+                error: payloadSchema,
+            }),
+        ).toThrow(TypeError);
+    });
+
     test("validates event type, version, and payload", async () => {
         const contract = defineEventContract({
             type: "Updated",

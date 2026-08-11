@@ -17,6 +17,7 @@ export const healthContract = defineHttpContract({
 ```
 
 For uploads, set `requestBody: { encoding: "multipart/form-data", maxBytes? }`.
+`maxBytes` is valid only for multipart and must be a non-negative safe integer.
 Omitting `requestBody` keeps JSON serialization. Multipart input uses
 `body: Record<string, string | Blob | readonly (string | Blob)[] | undefined>`;
 repeated fields are represented as arrays by the backend.

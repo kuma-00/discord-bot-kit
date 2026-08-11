@@ -228,6 +228,40 @@ export class HttpClient {
                     ) {
                         throw new Error("Invalid API failure envelope");
                     }
+                    const code = (envelopeError as { code: string }).code;
+                    const message = (envelopeError as { message: string })
+                        .message;
+                    const hasKind = "kind" in envelopeError;
+                    if (hasKind) {
+                        const kind = (envelopeError as { kind?: unknown }).kind;
+                        const validStatus =
+                            (code === "invalid-input" ||
+                                code === "invalid-multipart") &&
+                            response.status === 400;
+                        const validPayloadLimit =
+                            code === "payload-too-large" &&
+                            response.status === 413;
+                        if (
+                            kind !== "request-input" ||
+                            (!validStatus && !validPayloadLimit) ||
+                            "details" in envelopeError
+                        ) {
+                            throw new Error(
+                                "Invalid request-input failure marker",
+                            );
+                        }
+                        return {
+                            ok: false,
+                            error: {
+                                code,
+                                message,
+                                details: {
+                                    kind: "http",
+                                    status: response.status,
+                                },
+                            },
+                        };
+                    }
                     const details = (await parseSchema(
                         contract.error,
                         (envelopeError as { details?: unknown }).details,
@@ -236,9 +270,8 @@ export class HttpClient {
                     return {
                         ok: false,
                         error: {
-                            code: (envelopeError as { code: string }).code,
-                            message: (envelopeError as { message: string })
-                                .message,
+                            code,
+                            message,
                             details,
                         },
                     };

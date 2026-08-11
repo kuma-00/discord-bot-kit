@@ -16,3 +16,4 @@ export const healthRoute = defineRoute({
 one value to a scalar and repeated names to arrays, then validates the complete
 `{ params, query, body }` input. Missing multipart content type is a safe 400;
 `maxBytes` violations are 413.
+Framework-generated input failures include `kind: "request-input"` so clients can distinguish them from declared handler errors.
