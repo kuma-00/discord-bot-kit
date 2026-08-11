@@ -11,3 +11,8 @@ export const healthRoute = defineRoute({
     handler: () => ({ ok: true, data: { status: "ok" } }),
 });
 ```
+
+`executeRoute` parses multipart requests with `request.formData()`, normalizes
+one value to a scalar and repeated names to arrays, then validates the complete
+`{ params, query, body }` input. Missing multipart content type is a safe 400;
+`maxBytes` violations are 413.

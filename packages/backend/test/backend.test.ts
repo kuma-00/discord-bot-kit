@@ -11,6 +11,92 @@ import {
 } from "../src/index.ts";
 
 describe("backend core", () => {
+    test("parses multipart fields, repeated names, and files before schema validation", async () => {
+        const contract = defineHttpContract({
+            id: "upload",
+            method: "POST",
+            path: "/upload",
+            requestBody: { encoding: "multipart/form-data", maxBytes: 2048 },
+            input: objectSchema,
+            output: objectSchema,
+            error: objectSchema,
+        });
+        const file = new File(["hello"], "hello.txt", { type: "text/plain" });
+        const form = new FormData();
+        form.set("title", "upload");
+        form.append("tag", "one");
+        form.append("tag", "two");
+        form.set("file", file);
+        let capturedInput: Record<string, unknown> | undefined;
+        const response = await executeRoute(
+            defineRoute({
+                contract,
+                handler: ({ input }) => {
+                    capturedInput = input;
+                    return { ok: true, data: input };
+                },
+            }),
+            new Request("https://example.test/upload", {
+                method: "POST",
+                body: form,
+            }),
+            {},
+        );
+        expect(response.status).toBe(200);
+        const payload = await response.json();
+        expect(payload.data.body.title).toBe("upload");
+        expect(payload.data.body.tag).toEqual(["one", "two"]);
+        const capturedFile = (capturedInput?.body as Record<string, unknown>)
+            ?.file as File;
+        expect(capturedFile.name).toBe("hello.txt");
+    });
+
+    test("returns safe 400 and 413 responses for invalid and oversized multipart input", async () => {
+        const contract = defineHttpContract({
+            id: "upload-limited",
+            method: "POST",
+            path: "/upload",
+            requestBody: { encoding: "multipart/form-data", maxBytes: 4 },
+            input: objectSchema,
+            output: objectSchema,
+            error: objectSchema,
+        });
+        const route = defineRoute({
+            contract,
+            handler: ({ input }) => ({ ok: true, data: input }),
+        });
+        const invalid = await executeRoute(
+            route,
+            new Request("https://example.test/upload", {
+                method: "POST",
+                body: JSON.stringify({ body: {} }),
+                headers: { "content-type": "application/json" },
+            }),
+            {},
+        );
+        expect(invalid.status).toBe(400);
+        expect(await invalid.json()).toMatchObject({
+            ok: false,
+            error: { code: "invalid-multipart" },
+        });
+
+        const form = new FormData();
+        form.set("value", "12345");
+        const oversized = await executeRoute(
+            route,
+            new Request("https://example.test/upload", {
+                method: "POST",
+                body: form,
+            }),
+            {},
+        );
+        expect(oversized.status).toBe(413);
+        expect(await oversized.json()).toMatchObject({
+            ok: false,
+            error: { code: "payload-too-large" },
+        });
+    });
+
     test("authenticates API keys without exposing the configured key", () => {
         const request = new Request("https://example.test");
         const result = authenticateApiKey(request, { apiKey: "secret" });

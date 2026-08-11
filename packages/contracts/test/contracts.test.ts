@@ -28,6 +28,32 @@ describe("contracts", () => {
         expect(contract.method).toBe("GET");
     });
 
+    test("preserves multipart request-body metadata and defaults omitted encoding", () => {
+        const multipart = defineHttpContract({
+            id: "upload",
+            method: "POST",
+            path: "/upload",
+            requestBody: { encoding: "multipart/form-data", maxBytes: 1024 },
+            input: payloadSchema,
+            output: payloadSchema,
+            error: payloadSchema,
+        });
+        expect(multipart.requestBody).toEqual({
+            encoding: "multipart/form-data",
+            maxBytes: 1024,
+        });
+        expect(
+            defineHttpContract({
+                id: "json",
+                method: "POST",
+                path: "/json",
+                input: payloadSchema,
+                output: payloadSchema,
+                error: payloadSchema,
+            }).requestBody,
+        ).toBeUndefined();
+    });
+
     test("validates event type, version, and payload", async () => {
         const contract = defineEventContract({
             type: "Updated",

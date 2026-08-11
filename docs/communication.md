@@ -19,6 +19,12 @@ envelopeとして解釈し、成功時は`data`をcontractのoutput schema、契
 失敗時は`error.details`をerror schemaで検証します。JSON、envelope、data、error
 detailsの不正、network、timeout、abortは`TransportFailureDetails`へ変換します。
 
+Upload routeではcontractに`requestBody: { encoding: "multipart/form-data" }`を指定します。
+`body`は文字列、`Blob`/`File`、または同名フィールドの配列を受け付けます。Transportは
+`FormData`を作り、`content-type`を削除してFetchにboundary生成を委譲します。Backendは
+`formData()`を読み、単一値をscalar、反復名をarrayとして完全なinput schemaを検証します。
+`maxBytes`超過は413、content-type不正やmultipart解析失敗は安全な400です。
+
 ## Backend
 
 `defineRoute`はHTTP契約とframework-neutral handlerを対応付けます。`executeRoute`が入力と出力を検証し、`Request`から`Response`を生成します。

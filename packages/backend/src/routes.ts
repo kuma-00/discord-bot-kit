@@ -7,6 +7,19 @@ import {
     type StandardSchemaV1,
 } from "@kuma-00/bot-kit-contracts";
 
+class RequestInputError extends Error {
+    constructor(
+        readonly code:
+            | "invalid-input"
+            | "invalid-multipart"
+            | "payload-too-large",
+        readonly status: 400 | 413,
+    ) {
+        super(code);
+        this.name = "RequestInputError";
+    }
+}
+
 /** Logger surface used by framework-neutral backend helpers. */
 export interface BackendLogger {
     readonly info?: (
@@ -86,6 +99,21 @@ export function mapBackendError(
     error: unknown,
     logger?: BackendLogger,
 ): Response {
+    if (error instanceof RequestInputError) {
+        return jsonResult(
+            {
+                ok: false,
+                error: {
+                    code: error.code,
+                    message:
+                        error.code === "payload-too-large"
+                            ? "Request payload is too large"
+                            : "Request input is invalid",
+                },
+            },
+            error.status,
+        );
+    }
     logger?.error?.("Unhandled backend error", { error });
     const failure: ApiFailure = {
         ok: false,
@@ -97,6 +125,66 @@ export function mapBackendError(
     return jsonResult(failure, 500);
 }
 
+function multipartBody(form: FormData): Readonly<Record<string, unknown>> {
+    const body: Record<string, FormDataEntryValue | FormDataEntryValue[]> = {};
+    for (const [name, value] of form) {
+        const current = body[name];
+        if (current === undefined) body[name] = value;
+        else if (Array.isArray(current)) current.push(value);
+        else body[name] = [current, value];
+    }
+    return body;
+}
+
+async function readRouteInput(
+    definition: RouteDefinition<
+        StandardSchemaV1,
+        StandardSchemaV1,
+        StandardSchemaV1
+    >,
+    request: Request,
+    rawInput: unknown,
+): Promise<unknown> {
+    if (definition.contract.requestBody?.encoding !== "multipart/form-data") {
+        return rawInput;
+    }
+    const contentType = request.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
+        throw new RequestInputError("invalid-multipart", 400);
+    }
+    const maxBytes = definition.contract.requestBody.maxBytes;
+    const contentLength = Number(request.headers.get("content-length"));
+    if (maxBytes !== undefined && contentLength > maxBytes) {
+        throw new RequestInputError("payload-too-large", 413);
+    }
+    try {
+        const form = await request.formData();
+        if (request.signal.aborted) throw request.signal.reason;
+        const body = multipartBody(form);
+        if (maxBytes !== undefined) {
+            let size = 0;
+            for (const value of form.values() as IterableIterator<
+                string | Blob
+            >) {
+                size +=
+                    typeof value === "string"
+                        ? new TextEncoder().encode(value).byteLength
+                        : value.size;
+            }
+            if (size > maxBytes) {
+                throw new RequestInputError("payload-too-large", 413);
+            }
+        }
+        const base =
+            typeof rawInput === "object" && rawInput !== null ? rawInput : {};
+        return { ...base, body };
+    } catch (error) {
+        if (error instanceof RequestInputError) throw error;
+        if (request.signal.aborted) throw error;
+        throw new RequestInputError("invalid-multipart", 400);
+    }
+}
+
 /** Executes and validates a framework-neutral route definition. */
 export async function executeRoute<
     TInputSchema extends StandardSchemaV1,
@@ -105,16 +193,22 @@ export async function executeRoute<
 >(
     definition: RouteDefinition<TInputSchema, TOutputSchema, TErrorSchema>,
     request: Request,
-    rawInput: unknown,
+    rawInput?: unknown,
     params: Readonly<Record<string, string>> = {},
     logger?: BackendLogger,
 ): Promise<Response> {
     try {
-        const input = (await parseSchema(
-            definition.contract.input,
-            rawInput,
-            `${definition.contract.id}.input`,
-        )) as SchemaOutput<TInputSchema>;
+        let input: SchemaOutput<TInputSchema>;
+        try {
+            input = (await parseSchema(
+                definition.contract.input,
+                await readRouteInput(definition, request, rawInput),
+                `${definition.contract.id}.input`,
+            )) as SchemaOutput<TInputSchema>;
+        } catch (error) {
+            if (error instanceof RequestInputError) throw error;
+            throw new RequestInputError("invalid-input", 400);
+        }
         const result = await definition.handler({ request, input, params });
         if (result.ok) {
             const data = await parseSchema(

@@ -13,8 +13,12 @@ export {
     type ApiResult,
     type ApiSuccess,
     defineHttpContract,
+    type HttpBodyEncoding,
     type HttpContract,
     type HttpMethod,
+    type HttpRequestBody,
+    type MultipartFormBody,
+    type MultipartFormValue,
 } from "./http.ts";
 export {
     ContractValidationError,

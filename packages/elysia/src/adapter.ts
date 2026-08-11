@@ -48,11 +48,17 @@ export function createElysiaApp(options: CreateElysiaAppOptions): Elysia {
                 return executeRoute(
                     definition,
                     request,
-                    { params, query, body },
+                    definition.contract.requestBody?.encoding ===
+                        "multipart/form-data"
+                        ? { params, query }
+                        : { params, query, body },
                     params,
                     options.logger,
                 );
             },
+            definition.contract.requestBody?.encoding === "multipart/form-data"
+                ? { parse: "none" }
+                : undefined,
         );
     }
 

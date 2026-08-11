@@ -11,3 +11,7 @@ createElysiaApp({
     routes: [healthRoute],
 }).listen(3000);
 ```
+
+Multipart routes are registered with Elysia parsing disabled; the backend
+executor owns `formData()` parsing and validation. This preserves the same
+contract behavior when called directly or through the adapter.

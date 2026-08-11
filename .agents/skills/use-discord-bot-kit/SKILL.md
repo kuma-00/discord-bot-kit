@@ -71,6 +71,9 @@ import one another directly; share runtime contracts instead.
   invalid responses.
 - Propagate `AbortSignal` and clean up listeners, timers, SSE subscriptions, and
   streams.
+- For uploads, use a contract `requestBody` with `encoding: "multipart/form-data"`;
+  pass strings, `Blob`/`File`, or repeated field arrays and let the transport
+  create the boundary. Configure `maxBytes` when the route has a payload limit.
 - Stop the Discord client during shutdown and in test cleanup.
 - Keep command and event registration static; do not add runtime directory
   scanning.

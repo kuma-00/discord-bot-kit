@@ -2,6 +2,7 @@ import {
     type ApiFailure,
     type ApiResult,
     type HttpContract,
+    type MultipartFormBody,
     parseSchema,
     type SchemaOutput,
     type StandardSchemaV1,
@@ -78,6 +79,26 @@ function buildPath(path: string, input: HttpRequestInput): string {
     return suffix ? `${resolved}?${suffix}` : resolved;
 }
 
+function createMultipartBody(body: unknown): FormData {
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        throw new TypeError("Multipart body must be a field record");
+    }
+    const form = new FormData();
+    for (const [name, rawValue] of Object.entries(body as MultipartFormBody)) {
+        const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+        for (const value of values) {
+            if (value === undefined) continue;
+            if (typeof value !== "string" && !(value instanceof Blob)) {
+                throw new TypeError(
+                    `Multipart field ${name} must be a string or Blob`,
+                );
+            }
+            form.append(name, value);
+        }
+    }
+    return form;
+}
+
 /** Typed Fetch client driven by runtime route contracts. */
 export class HttpClient {
     private readonly fetchImplementation: FetchLike;
@@ -115,6 +136,22 @@ export class HttpClient {
             });
         }
         const serialized = parsedInput as HttpRequestInput;
+        const multipart =
+            contract.requestBody?.encoding === "multipart/form-data";
+        let requestBody: BodyInit | undefined;
+        try {
+            requestBody =
+                serialized.body === undefined
+                    ? undefined
+                    : multipart
+                      ? createMultipartBody(serialized.body)
+                      : JSON.stringify(serialized.body);
+        } catch (cause) {
+            return failure("invalid-input", "Request input is invalid", {
+                kind: "invalid-response",
+                cause,
+            });
+        }
         const controller = new AbortController();
         const timeoutMs = this.options.timeoutMs ?? 10_000;
         let timedOut = false;
@@ -123,7 +160,11 @@ export class HttpClient {
             controller.abort();
         }, timeoutMs);
         const abort = () => controller.abort(requestOptions.signal?.reason);
-        requestOptions.signal?.addEventListener("abort", abort, { once: true });
+        if (requestOptions.signal?.aborted) abort();
+        else
+            requestOptions.signal?.addEventListener("abort", abort, {
+                once: true,
+            });
 
         try {
             const baseHeaders =
@@ -135,8 +176,11 @@ export class HttpClient {
                 ...baseHeaders,
                 ...requestOptions.headers,
             });
-            if (serialized.body !== undefined) {
+            if (serialized.body !== undefined && !multipart) {
                 headers.set("content-type", "application/json");
+            } else if (multipart) {
+                // Fetch must generate the multipart boundary.
+                headers.delete("content-type");
             }
             if (this.options.apiKey) {
                 headers.set(
@@ -153,9 +197,7 @@ export class HttpClient {
                     method: contract.method,
                     headers,
                     signal: controller.signal,
-                    ...(serialized.body === undefined
-                        ? {}
-                        : { body: JSON.stringify(serialized.body) }),
+                    ...(requestBody === undefined ? {} : { body: requestBody }),
                 },
             );
             let payload: unknown;

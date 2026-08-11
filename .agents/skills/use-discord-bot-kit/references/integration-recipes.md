@@ -47,6 +47,12 @@ queues, persistence, and command domain logic outside the library.
 5. Convert expected failures into the contract's error envelope and let the
    backend error boundary handle unexpected exceptions without leaking details.
 
+For multipart uploads, set `requestBody.encoding` to `"multipart/form-data"`.
+The transport accepts string/Blob/File fields and readonly arrays for repeated
+names; the backend normalizes repeated names to arrays and validates the full
+input. `maxBytes` produces 413, while missing/invalid multipart input produces
+400. Do not set a manual multipart boundary header.
+
 Test valid requests, invalid params/query/body, invalid handler output,
 authentication failure, expected domain failure, and unexpected exceptions.
 

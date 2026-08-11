@@ -48,6 +48,19 @@ const route = defineHttpContract({
     error: errorSchema,
 });
 
+const multipartRoute = defineHttpContract({
+    id: "upload",
+    method: "POST",
+    path: "/upload",
+    requestBody: { encoding: "multipart/form-data" },
+    input: schema<{ body?: Record<string, unknown> }>(
+        (value): value is { body?: Record<string, unknown> } =>
+            typeof value === "object" && value !== null,
+    ),
+    output: outputSchema,
+    error: errorSchema,
+});
+
 describe("HttpClient", () => {
     test("serializes path, query, body, and API key", async () => {
         let captured: Request | undefined;
@@ -68,6 +81,48 @@ describe("HttpClient", () => {
         expect(captured?.url).toBe("https://example.test/items/42?active=true");
         expect(captured?.headers.get("x-api-key")).toBe("key");
         expect(await captured?.json()).toEqual({ name: "test" });
+    });
+
+    test("serializes multipart strings, files, and repeated fields without a content-type boundary", async () => {
+        let captured: Request | undefined;
+        const client = new HttpClient({
+            baseUrl: "https://example.test",
+            headers: { "content-type": "application/json" },
+            fetch: async (input, init) => {
+                captured = new Request(input, init);
+                return Response.json({ ok: true, data: { id: "42" } });
+            },
+        });
+        const result = await client.request(multipartRoute, {
+            body: {
+                title: "hello",
+                tags: ["one", "two"],
+                file: new File(["contents"], "note.txt", {
+                    type: "text/plain",
+                }),
+                optional: undefined,
+            },
+        });
+        expect(result).toEqual({ ok: true, data: { id: "42" } });
+        expect(captured?.headers.get("content-type")).toMatch(
+            /^multipart\/form-data; boundary=/,
+        );
+        const form = await captured?.formData();
+        expect(form?.get("title")).toBe("hello");
+        expect(form?.getAll("tags")).toEqual(["one", "two"]);
+        expect((form?.get("file") as File)?.name).toBe("note.txt");
+        expect(form?.has("optional")).toBe(false);
+    });
+
+    test("maps multipart serializer failures to invalid-input", async () => {
+        const result = await new HttpClient({
+            baseUrl: "https://example.test",
+            fetch: async () => Response.json({ ok: true, data: { id: "1" } }),
+        }).request(multipartRoute, {
+            body: { invalid: 123 } as never,
+        });
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error.code).toBe("invalid-input");
     });
 
     test("returns typed HTTP and invalid-response failures", async () => {
@@ -197,6 +252,78 @@ describe("HttpClient", () => {
         const result = await client.request(route, { params: { id: "1" } });
         expect(result.ok).toBe(false);
         if (!result.ok) expect(result.error.code).toBe("timeout");
+    });
+
+    test("returns aborted for caller cancellation, including an already-aborted signal", async () => {
+        const controller = new AbortController();
+        const client = new HttpClient({
+            baseUrl: "https://example.test",
+            fetch: async (_input, init) => {
+                if (init?.signal?.aborted) {
+                    throw new DOMException("aborted", "AbortError");
+                }
+                return new Promise<Response>((_resolve, reject) => {
+                    init?.signal?.addEventListener("abort", () =>
+                        reject(new DOMException("aborted", "AbortError")),
+                    );
+                });
+            },
+        });
+        const pending = client.request(
+            route,
+            { params: { id: "1" } },
+            { signal: controller.signal },
+        );
+        setTimeout(() => controller.abort("caller cancelled"), 0);
+        const cancelled = await pending;
+        expect(cancelled.ok).toBe(false);
+        if (!cancelled.ok) expect(cancelled.error.code).toBe("aborted");
+
+        const alreadyAborted = new AbortController();
+        alreadyAborted.abort();
+        const immediate = await client.request(
+            route,
+            { params: { id: "1" } },
+            { signal: alreadyAborted.signal },
+        );
+        expect(immediate.ok).toBe(false);
+        if (!immediate.ok) expect(immediate.error.code).toBe("aborted");
+    });
+
+    test("returns a network failure when Fetch rejects", async () => {
+        const result = await new HttpClient({
+            baseUrl: "https://example.test",
+            fetch: async () => {
+                throw new Error("offline");
+            },
+        }).request(route, { params: { id: "1" } });
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+            expect(result.error.code).toBe("network-error");
+            expect(result.error.details).toMatchObject({ kind: "network" });
+        }
+    });
+
+    test("removes the caller abort listener after request completion", async () => {
+        let added = 0;
+        let removed = 0;
+        const signal = {
+            aborted: false,
+            reason: undefined,
+            addEventListener: () => {
+                added++;
+            },
+            removeEventListener: () => {
+                removed++;
+            },
+        } as unknown as AbortSignal;
+        const result = await new HttpClient({
+            baseUrl: "https://example.test",
+            fetch: async () => Response.json({ ok: true, data: { id: "1" } }),
+        }).request(route, { params: { id: "1" } }, { signal });
+        expect(result).toEqual({ ok: true, data: { id: "1" } });
+        expect(added).toBe(1);
+        expect(removed).toBe(1);
     });
 });
 

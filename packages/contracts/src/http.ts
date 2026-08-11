@@ -24,6 +24,27 @@ export type ApiResult<T, TDetails = unknown> =
 /** HTTP methods supported by a bot-kit route contract. */
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
+/** Serialization used for an HTTP contract request body. */
+export type HttpBodyEncoding = "json" | "multipart/form-data";
+
+/** Request-body metadata. Omission preserves the default JSON behavior. */
+export interface HttpRequestBody {
+    readonly encoding: HttpBodyEncoding;
+    /** Maximum accepted multipart payload size in bytes. */
+    readonly maxBytes?: number;
+}
+
+/** A scalar value accepted in a multipart form field. */
+export type MultipartFormValue = string | Blob;
+
+/** Structured multipart body accepted by the default HTTP serializer. */
+export type MultipartFormBody = Readonly<
+    Record<
+        string,
+        MultipartFormValue | ReadonlyArray<MultipartFormValue> | undefined
+    >
+>;
+
 /** Runtime schemas and metadata for one HTTP operation. */
 export interface HttpContract<
     TInput extends StandardSchemaV1 = StandardSchemaV1,
@@ -33,6 +54,8 @@ export interface HttpContract<
     readonly id: string;
     readonly method: HttpMethod;
     readonly path: string;
+    /** Request serialization. Defaults to `{ encoding: "json" }`. */
+    readonly requestBody?: HttpRequestBody;
     readonly input: TInput;
     readonly output: TOutput;
     readonly error: TError;
