@@ -33,6 +33,63 @@ export interface ConfigIssue {
     readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }>;
 }
 
+/** Stable machine-readable category for a configuration loading failure. */
+export type ConfigErrorCode =
+    | "invalid-options"
+    | "file-not-found"
+    | "file-read"
+    | "file-create"
+    | "yaml-parse"
+    | "environment-path"
+    | "environment-parse"
+    | "validation"
+    | "validation-default"
+    | "validation-convergence"
+    | "secret-template"
+    | "unknown";
+
+/** Safe high-level classification of the underlying failure. */
+export type ConfigErrorCause =
+    | "conflict"
+    | "missing"
+    | "read"
+    | "write"
+    | "parse"
+    | "unsafe-path"
+    | "validation"
+    | "unknown";
+
+/** Logger-neutral schema issue with secret-bearing messages removed. */
+export interface ConfigDiagnosticIssue {
+    readonly path?: ReadonlyArray<string | number>;
+    readonly message: string;
+    readonly redacted?: true;
+}
+
+/** Safe, JSON-serializable representation of a configuration error. */
+export type ConfigErrorDiagnostic =
+    | {
+          readonly kind: "config-error";
+          readonly code: ConfigErrorCode;
+          readonly source:
+              | "file"
+              | "yaml"
+              | "environment"
+              | "override"
+              | "validation";
+          readonly message: string;
+          readonly path?: ReadonlyArray<string | number>;
+          readonly issues: ReadonlyArray<ConfigDiagnosticIssue>;
+          readonly cause: ConfigErrorCause;
+      }
+    | {
+          readonly kind: "unknown-error";
+          readonly code: "unknown";
+          readonly message: "Unknown configuration error";
+          readonly issues: readonly [];
+          readonly cause: "unknown";
+      };
+
 /** Maps an environment variable to a dotted configuration path. */
 export interface EnvironmentBinding {
     readonly env: string;

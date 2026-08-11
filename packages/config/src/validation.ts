@@ -13,13 +13,26 @@ export async function validateConfig<T>(
     defaults: unknown,
     policy: ValidationErrorPolicy,
     onDiagnostic?: ConfigDiagnosticHandler,
+    secretPaths: ReadonlyArray<ReadonlyArray<string | number>> = [],
 ): Promise<T> {
     const current = structuredClone(candidate);
     const repairedPaths = new Set<string>();
     const maximumAttempts = 32;
 
     for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
-        const result = await schema["~standard"].validate(current);
+        let result: Awaited<
+            ReturnType<ConfigSchema<T>["~standard"]["validate"]>
+        >;
+        try {
+            result = await schema["~standard"].validate(current);
+        } catch {
+            throw new ConfigError(
+                "Configuration validator failed",
+                "validation",
+                [],
+                { code: "validation", cause: "unknown", secretPaths },
+            );
+        }
         if (result.issues === undefined) return result.value;
         if (policy === "throw" || !isRecord(current)) {
             for (const issue of result.issues) {
@@ -34,6 +47,7 @@ export async function validateConfig<T>(
                 "Configuration validation failed",
                 "validation",
                 result.issues,
+                { code: "validation", cause: "validation", secretPaths },
             );
         }
 
@@ -66,6 +80,11 @@ export async function validateConfig<T>(
                     "Configuration validation failed and no usable default is available",
                     "validation",
                     result.issues,
+                    {
+                        code: "validation-default",
+                        cause: "validation",
+                        secretPaths,
+                    },
                 );
             }
             repairs.set(pathId, { keys, value: fallback.value });
@@ -84,5 +103,11 @@ export async function validateConfig<T>(
     throw new ConfigError(
         "Configuration validation did not converge after applying defaults",
         "validation",
+        [],
+        {
+            code: "validation-convergence",
+            cause: "validation",
+            secretPaths,
+        },
     );
 }

@@ -98,6 +98,23 @@ const config: ApplicationConfig = await loadDefinedConfig(applicationConfig);
 
 `ConfigError`は失敗sourceを`file | yaml | environment | override | validation`で公開します。Environment parserの例外本文やsecretの実値を公開エラーメッセージへ含めません。Schema issueはpathとmessageを保持しますが、validator側もsecret値をmessageへ埋め込まない必要があります。
 
+### `toConfigDiagnostics`
+
+起動境界では`toConfigDiagnostics(error)`を使うと、任意のthrow値をlogger非依存のJSON化可能なdiagnosticへ変換できます。
+
+```ts
+try {
+    await loadDefinedConfig(applicationConfig);
+} catch (error) {
+    logger.error(toConfigDiagnostics(error), "Configuration loading failed");
+    throw error;
+}
+```
+
+`ConfigError`は`kind: "config-error"`、安定した`code`、`source`、安全な`message`、任意の`path`、`issues`、`cause`を返します。未知のthrow値は`kind: "unknown-error"`、`code: "unknown"`、`message: "Unknown configuration error"`、空の`issues`、`cause: "unknown"`になります。raw cause・stack・設定値・environment値は含まれません。
+
+`secret: true`のbinding pathは`loadConfig`/`loadDefinedConfig`が`ConfigError` metadataへ引き継ぎます。validation issueのpathがsecret pathと祖先・子孫関係を含めて重なる場合、messageは`Invalid secret configuration value`に置換され、`redacted: true`が付きます。利用側でsecret path一覧を別管理せず、diagnosticをそのままloggerへ渡してください。
+
 ## 既存コードからの移行
 
 明示的なYAML文字列や単発のfile pathを渡す用途では`loadConfig`をそのまま利用できます。自動探索やテンプレート生成が必要なentrypointだけを`defineConfig`と`loadDefinedConfig`へ移行してください。sourceの優先順位は両APIで同じです。

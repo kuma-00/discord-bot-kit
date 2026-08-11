@@ -27,6 +27,8 @@ export function dottedPathKeys(path: string): ReadonlyArray<string> {
         throw new ConfigError(
             "Environment binding path is empty or unsafe",
             "environment",
+            [],
+            { code: "environment-path", cause: "unsafe-path" },
         );
     }
     return keys;

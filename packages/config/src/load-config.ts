@@ -1,13 +1,30 @@
 import { parseYamlSource } from "./config-file.ts";
 import { ConfigError } from "./errors.ts";
-import { merge, setPath } from "./path.ts";
+import { dottedPathKeys, merge, setPath } from "./path.ts";
 import type { LoadConfigOptions } from "./types.ts";
 import { validateConfig } from "./validation.ts";
 
 /** Loads defaults, YAML, environment values, and overrides in that order. */
 export async function loadConfig<T>(options: LoadConfigOptions<T>): Promise<T> {
+    const bindingPaths = (options.bindings ?? []).map((binding) => ({
+        binding,
+        path: dottedPathKeys(binding.path),
+    }));
+    const secretPaths = bindingPaths
+        .filter(({ binding }) => binding.secret)
+        .map(({ path }) => path);
+
     if (options.file !== undefined && options.yaml !== undefined) {
-        throw new ConfigError("Specify either file or yaml, not both", "yaml");
+        throw new ConfigError(
+            "Specify either file or yaml, not both",
+            "yaml",
+            [],
+            {
+                code: "invalid-options",
+                cause: "conflict",
+                secretPaths,
+            },
+        );
     }
 
     let yamlConfig: unknown = {};
@@ -18,6 +35,8 @@ export async function loadConfig<T>(options: LoadConfigOptions<T>): Promise<T> {
                 throw new ConfigError(
                     `Configuration file does not exist: ${options.file}`,
                     "file",
+                    [],
+                    { code: "file-not-found", cause: "missing", secretPaths },
                 );
             }
             yamlConfig = parseYamlSource(await file.text(), "file");
@@ -26,6 +45,8 @@ export async function loadConfig<T>(options: LoadConfigOptions<T>): Promise<T> {
             throw new ConfigError(
                 `Unable to read configuration file: ${options.file}`,
                 "file",
+                [],
+                { code: "file-read", cause: "read", secretPaths },
             );
         }
     } else if (options.yaml !== undefined) {
@@ -34,7 +55,7 @@ export async function loadConfig<T>(options: LoadConfigOptions<T>): Promise<T> {
 
     const environmentConfig: Record<string, unknown> = {};
     const environment = options.environment ?? process.env;
-    for (const binding of options.bindings ?? []) {
+    for (const { binding, path } of bindingPaths) {
         const raw = environment[binding.env];
         if (raw === undefined) continue;
         try {
@@ -50,6 +71,13 @@ export async function loadConfig<T>(options: LoadConfigOptions<T>): Promise<T> {
                     binding.secret ? " (redacted)" : ""
                 }`,
                 "environment",
+                [],
+                {
+                    code: "environment-parse",
+                    cause: "parse",
+                    path,
+                    secretPaths,
+                },
             );
         }
     }
@@ -64,5 +92,6 @@ export async function loadConfig<T>(options: LoadConfigOptions<T>): Promise<T> {
         options.defaults ?? {},
         options.onValidationError ?? "throw",
         options.onDiagnostic,
+        secretPaths,
     );
 }

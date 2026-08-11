@@ -18,6 +18,8 @@ export function parseYamlSource(
         throw new ConfigError(
             `Unable to parse ${origin} configuration`,
             origin,
+            [],
+            { code: "yaml-parse", cause: "parse" },
         );
     }
 }
@@ -33,6 +35,8 @@ function assertTemplateHasNoSecrets(
             throw new ConfigError(
                 `Configuration template must not contain secret path ${binding.path}`,
                 "file",
+                [],
+                { code: "secret-template", cause: "write", path: keys },
             );
         }
     }
@@ -74,6 +78,8 @@ export async function createConfigFile(
         throw new ConfigError(
             `Unable to create configuration file: ${path}`,
             "file",
+            [],
+            { code: "file-create", cause: "write" },
         );
     } finally {
         await handle?.close().catch(() => undefined);

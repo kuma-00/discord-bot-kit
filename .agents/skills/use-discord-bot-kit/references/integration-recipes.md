@@ -15,6 +15,33 @@ reference. Before coding, inspect the installed package exports and signatures.
 5. Catch `ConfigError` only where the application can report the failed source
    and terminate safely.
 
+For a logger-safe error boundary, import `toConfigDiagnostics` and pass its
+result to the consumer's logger:
+
+```ts
+try {
+    await loadDefinedConfig(applicationConfig);
+} catch (error) {
+    logger.error(toConfigDiagnostics(error), "Configuration loading failed");
+    throw error;
+}
+```
+
+`toConfigDiagnostics(error)` accepts `unknown` and returns a JSON-serializable
+`ConfigErrorDiagnostic`. `ConfigError` results include `kind`, stable `code`,
+`source`, safe `message`, optional `path`, `issues`, and `cause`; unknown
+values return the fixed `unknown-error` shape. It never copies raw causes,
+stacks, configuration values, or environment values. Secret bindings are
+carried into loader error metadata. Validation issues overlapping a secret
+path in either ancestor direction are replaced with
+`Invalid secret configuration value` and `redacted: true`.
+
+Before using this helper, inspect the installed package exports and type
+declarations in the consumer's lockfile-resolved version. Existing
+`ConfigError` handling remains compatible. Replace consumer-maintained secret
+path lists with `secret: true` bindings and the diagnostic helper; do not
+reimplement redaction in the logger.
+
 Test recursive object merging, array replacement, missing files, environment
 parsing, schema failure, and secret redaction.
 
