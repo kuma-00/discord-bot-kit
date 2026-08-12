@@ -15,12 +15,29 @@ export type VoiceConnectionState =
     | "destroyed"
     | "error";
 
-/** Grace period, retry bound, Ready timeout, and retry backoff settings. */
-export interface VoiceConnectionRecoveryOptions {
-    readonly gracePeriodMs?: number;
+/** Ordered recovery strategies used after an unexpected disconnect. */
+export type VoiceConnectionRecoveryMethod = "grace" | "rejoin" | "recreate";
+
+/** Retry settings for the existing connection's `rejoin` operation. */
+export interface VoiceConnectionRejoinRecoveryOptions {
     readonly maxAttempts?: number;
     readonly readyTimeoutMs?: number;
     readonly backoffMs?: number;
+}
+
+/** Retry settings for destroying and creating a replacement connection. */
+export interface VoiceConnectionRecreateRecoveryOptions {
+    readonly enabled?: boolean;
+    readonly maxAttempts?: number;
+    readonly readyTimeoutMs?: number;
+    readonly backoffMs?: number;
+}
+
+/** Grace period and bounded retry settings for connection recovery. */
+export interface VoiceConnectionRecoveryOptions {
+    readonly gracePeriodMs?: number;
+    readonly rejoin?: VoiceConnectionRejoinRecoveryOptions;
+    readonly recreate?: VoiceConnectionRecreateRecoveryOptions;
 }
 
 /** Injectable `@discordjs/voice` operations used for testing and integration. */
@@ -33,6 +50,25 @@ export interface VoiceConnectionAdapter {
         status: VoiceConnectionStatus,
         timeoutOrSignal: number | AbortSignal,
     ) => Promise<VoiceConnection>;
+}
+
+/** Context delivered before a rejoin or recreate recovery attempt. */
+export interface VoiceConnectionRecoveryAttemptContext {
+    readonly method: Exclude<VoiceConnectionRecoveryMethod, "grace">;
+    readonly attempt: number;
+    readonly connection: VoiceConnection;
+}
+
+/** Context delivered after any recovery strategy restores readiness. */
+export interface VoiceConnectionRecoveredContext {
+    readonly method: VoiceConnectionRecoveryMethod;
+    readonly connection: VoiceConnection;
+}
+
+/** Context delivered when all configured recovery attempts are exhausted. */
+export interface VoiceConnectionRecoveryFailedContext {
+    readonly error: VoiceConnectionRecoveryError;
+    readonly connection: VoiceConnection;
 }
 
 /** Connection defaults, recovery policy, adapter, and lifecycle hooks. */
@@ -48,12 +84,11 @@ export interface VoiceConnectionControllerOptions {
     ) => void;
     readonly onConnected?: (connection: VoiceConnection) => void;
     readonly onRecoveryAttempt?: (
-        attempt: number,
-        connection: VoiceConnection,
+        context: VoiceConnectionRecoveryAttemptContext,
     ) => void;
+    readonly onRecovered?: (context: VoiceConnectionRecoveredContext) => void;
     readonly onRecoveryFailed?: (
-        error: VoiceConnectionRecoveryError,
-        connection: VoiceConnection,
+        context: VoiceConnectionRecoveryFailedContext,
     ) => void;
     readonly onError?: (error: unknown) => void;
 }

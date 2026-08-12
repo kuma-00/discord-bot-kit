@@ -11,6 +11,7 @@ versions. Install only the packages that own required behavior.
 | Define shared HTTP and event runtime contracts | `@kuma-00/bot-kit-contracts` | Domain-specific contracts and schemas |
 | Call contract-driven HTTP endpoints or subscribe to validated SSE | `@kuma-00/bot-kit-transport` | Base URL, credentials, retry policy choices |
 | Manage a Discord.js client, static commands/events, and lifecycle | `@kuma-00/bot-kit-bot` | Commands, events, intents, token, domain services |
+| Manage one guild's Discord voice connection and bounded recovery | `@kuma-00/bot-kit-voice` | AudioPlayer, queues, playlists, speech, recording, and guild-level composition |
 | Execute framework-neutral routes, API-key auth, error mapping, or publish SSE | `@kuma-00/bot-kit-backend` | Domain handlers, authorization policy, persistence adapters |
 | Expose backend routes through Elysia | `@kuma-00/bot-kit-elysia` | Elysia composition and deployment |
 | Manage UI-neutral API, authentication, or realtime state | `@kuma-00/bot-kit-frontend` | Product state and UI behavior |

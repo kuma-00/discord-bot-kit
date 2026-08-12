@@ -52,8 +52,9 @@ compatibility layer without explicit approval.
 Keep these concerns in the consumer application:
 
 - commands, events, and product-specific Discord behavior
-- voice connections, players, queues, playlists, speech, games, and message
-  responses
+- audio players, queues, playlists, speech, games, guild-level voice controller
+  composition, and message responses; use `bot-kit-voice` for each connection's
+  transport lifecycle
 - database-specific schemas, queries, and migrations
 - concrete Discord OAuth session storage and policy
 - product UI, routes, and domain state

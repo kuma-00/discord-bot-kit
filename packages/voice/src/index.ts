@@ -7,6 +7,12 @@ export {
 export type {
     VoiceConnectionAdapter,
     VoiceConnectionControllerOptions,
+    VoiceConnectionRecoveredContext,
+    VoiceConnectionRecoveryAttemptContext,
+    VoiceConnectionRecoveryFailedContext,
+    VoiceConnectionRecoveryMethod,
     VoiceConnectionRecoveryOptions,
+    VoiceConnectionRecreateRecoveryOptions,
+    VoiceConnectionRejoinRecoveryOptions,
     VoiceConnectionState,
 } from "./types.ts";

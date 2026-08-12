@@ -59,6 +59,16 @@ Remember that chat input commands defer by default, autocomplete has a separate
 path, registry IDs are normalized, and duplicates are rejected. Keep voice,
 queues, persistence, and command domain logic outside the library.
 
+## Voice Connection
+
+Use `@kuma-00/bot-kit-voice` for the framework-neutral, single-guild voice
+connection lifecycle. Configure recovery in three stages: grace-period waiting,
+bounded `rejoin`, then optional bounded `recreate`. Keep `AudioPlayer`, queue,
+playlist, speech, recording, and guild-level controller composition in the
+consumer. Subscribe consumer-owned players with
+`connection.subscribe(audioPlayer)` in `onRecovered`; a recreate operation
+returns a new connection and may require application state migration.
+
 ## HTTP Contract and Backend
 
 1. Define input, success, and error schemas near a `defineHttpContract` call in

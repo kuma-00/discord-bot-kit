@@ -13,15 +13,29 @@ import {
 import type {
     VoiceConnectionAdapter,
     VoiceConnectionControllerOptions,
+    VoiceConnectionRecoveryMethod,
     VoiceConnectionState,
 } from "./types.ts";
+
+interface RecoveryToken {
+    generation: number;
+    connection: VoiceConnection;
+}
+
+interface RecoveryFailure {
+    readonly method: VoiceConnectionRecoveryMethod;
+    readonly attempts: number;
+    readonly cause: unknown;
+    readonly connection: VoiceConnection;
+}
 
 /**
  * Owns one guild voice connection with bounded recovery and cleanup.
  *
  * Same-target connects share work while each caller retains independent
  * cancellation. Channel changes are serialized and cancelled by disconnect or
- * destroy.
+ * destroy. Unexpected disconnects recover through grace, rejoin, then transport
+ * recreation without exposing transport lifecycle bookkeeping to consumers.
  */
 export class VoiceConnectionController {
     private _state: VoiceConnectionState = "idle";
@@ -30,44 +44,46 @@ export class VoiceConnectionController {
     private connectPromise: Promise<VoiceConnection> | undefined;
     private connectTarget: string | undefined;
     private connectController: AbortController | undefined;
-    private connectionGeneration = 0;
+    private lifecycleGeneration = 0;
     private recoveryPromise: Promise<void> | undefined;
     private recoveryController: AbortController | undefined;
     private explicitDisconnect = false;
     private readonly adapter: VoiceConnectionAdapter;
     private readonly handleDisconnected = () => {
-        if (this.explicitDisconnect || this._state === "destroyed") return;
-        if (!this.recoveryPromise) {
-            this.recoveryPromise = this.recover()
-                .catch((error) => {
-                    if (
-                        this.explicitDisconnect ||
-                        this._state === "destroyed"
-                    ) {
-                        return;
-                    }
-                    try {
-                        this.setState("error");
-                    } catch (stateError) {
-                        this.reportError(stateError);
-                    }
-                    this.reportError(error);
-                })
-                .finally(() => {
-                    this.recoveryPromise = undefined;
-                });
+        const connection = this._connection;
+        if (
+            !connection ||
+            this.explicitDisconnect ||
+            this._state === "destroyed" ||
+            this.recoveryPromise
+        ) {
+            return;
         }
+        const generation = this.lifecycleGeneration;
+        const recovery = this.recover(connection, generation)
+            .catch((error) => {
+                if (!this.isRecoveryCurrent(generation, connection)) return;
+                try {
+                    this.setState("error");
+                } catch (stateError) {
+                    this.reportError(stateError);
+                }
+                this.reportError(error);
+            })
+            .finally(() => {
+                if (this.recoveryPromise === recovery) {
+                    this.recoveryPromise = undefined;
+                }
+            });
+        this.recoveryPromise = recovery;
     };
     private readonly handleConnectionStateChange = (
         _oldState: RawVoiceConnectionState,
-        newState: RawVoiceConnectionState,
+        _newState: RawVoiceConnectionState,
     ) => {
-        if (
-            newState.status === VoiceConnectionStatus.Ready &&
-            this._state === "reconnecting"
-        ) {
-            this.setState("ready");
-        }
+        // Recovery owns observable controller state. Keeping this listener
+        // centralized prevents duplicate listeners and leaves room for future
+        // connection diagnostics without racing the recovery pipeline.
     };
 
     constructor(
@@ -111,6 +127,7 @@ export class VoiceConnectionController {
         if (
             this._state === "ready" &&
             this._channel?.id === channel.id &&
+            this._channel.guild.id === channel.guild.id &&
             this._connection
         ) {
             return withAbort(Promise.resolve(this._connection), options.signal);
@@ -120,10 +137,10 @@ export class VoiceConnectionController {
             if (this.connectTarget === target) {
                 return withAbort(this.connectPromise, options.signal);
             }
-            const generation = this.connectionGeneration;
+            const generation = this.lifecycleGeneration;
             const connectAfterCurrent = () => {
                 if (
-                    generation !== this.connectionGeneration ||
+                    generation !== this.lifecycleGeneration ||
                     options.signal?.aborted ||
                     this._state === "destroyed"
                 ) {
@@ -142,12 +159,22 @@ export class VoiceConnectionController {
                 options.signal,
             );
         }
+
+        const generation = ++this.lifecycleGeneration;
+        this.explicitDisconnect = false;
+        this.recoveryController?.abort(
+            new DOMException(
+                "Voice recovery superseded by connect",
+                "AbortError",
+            ),
+        );
         const controller = new AbortController();
         this.connectController = controller;
         this.connectTarget = target;
         this.connectPromise = this.connectInternal(
             channel,
             controller.signal,
+            generation,
         ).finally(() => {
             this.connectPromise = undefined;
             this.connectTarget = undefined;
@@ -167,53 +194,52 @@ export class VoiceConnectionController {
         ) {
             return;
         }
-        this.connectionGeneration++;
+        ++this.lifecycleGeneration;
         this.explicitDisconnect = true;
-        this.connectController?.abort(
-            new DOMException("Voice connection disconnected", "AbortError"),
+        const reason = new DOMException(
+            "Voice connection disconnected",
+            "AbortError",
         );
-        this.recoveryController?.abort(
-            new DOMException("Voice connection disconnected", "AbortError"),
-        );
+        this.connectController?.abort(reason);
+        this.recoveryController?.abort(reason);
         await this.connectPromise?.catch(() => {});
         this.setState("disconnecting");
-        this.detachConnection();
-        this._connection?.destroy();
+        const connection = this._connection;
+        if (connection) {
+            this.detachConnection(connection);
+            this.destroyConnection(connection);
+        }
         this._connection = undefined;
         this._channel = undefined;
         this.setState("idle");
-        this.explicitDisconnect = false;
         await this.recoveryPromise?.catch(() => {});
+        this.explicitDisconnect = false;
     }
 
     /** Permanently disconnects the controller; later connects are rejected. */
     async destroy(): Promise<void> {
         if (this._state === "destroyed") return;
         await this.disconnect();
+        ++this.lifecycleGeneration;
         this.explicitDisconnect = true;
         this.setState("destroyed");
     }
 
     private async connectInternal(
         channel: VoiceBasedChannel,
-        signal: AbortSignal | undefined,
+        signal: AbortSignal,
+        generation: number,
     ): Promise<VoiceConnection> {
-        this.explicitDisconnect = false;
-        this.recoveryController?.abort();
         const previousConnection = this._connection;
-        this.detachConnection();
+        if (previousConnection) this.detachConnection(previousConnection);
         this.setState("connecting");
+        let connection: VoiceConnection | undefined;
         try {
-            const connection = this.adapter.join({
-                channelId: channel.id,
-                guildId: channel.guild.id,
-                adapterCreator: channel.guild.voiceAdapterCreator,
-                selfMute: this.options.selfMute ?? false,
-                selfDeaf: this.options.selfDeaf ?? false,
-            });
+            connection = this.adapter.join(this.joinOptions(channel));
             if (previousConnection && previousConnection !== connection) {
-                previousConnection.destroy();
+                this.destroyConnection(previousConnection);
             }
+            this.assertConnectCurrent(generation, signal);
             this._channel = channel;
             this._connection = connection;
             this.attachConnection(connection);
@@ -222,15 +248,33 @@ export class VoiceConnectionController {
                 this.options.readyTimeoutMs ?? 15_000,
                 signal,
             );
+            this.assertConnectCurrent(generation, signal, connection);
             this.setState("ready");
-            this.runHook(() => this.options.onConnected?.(connection));
+            const connected = connection;
+            this.runHook(() => this.options.onConnected?.(connected));
             return connection;
         } catch (error) {
-            this.detachConnection();
-            this._connection?.destroy();
-            this._connection = undefined;
-            this._channel = undefined;
-            this.setState("error");
+            if (connection && this._connection === connection) {
+                this.detachConnection(connection);
+                this.destroyConnection(connection);
+                this._connection = undefined;
+                this._channel = undefined;
+            } else if (connection && connection !== this._connection) {
+                this.destroyConnection(connection);
+            }
+            if (previousConnection && this._connection === previousConnection) {
+                this.detachConnection(previousConnection);
+                this.destroyConnection(previousConnection);
+                this._connection = undefined;
+                this._channel = undefined;
+            }
+            if (
+                generation === this.lifecycleGeneration &&
+                this._state !== "destroyed" &&
+                !this.explicitDisconnect
+            ) {
+                this.setState("error");
+            }
             const wrapped =
                 error instanceof VoiceConnectionConnectError
                     ? error
@@ -243,99 +287,263 @@ export class VoiceConnectionController {
         }
     }
 
-    private async recover(): Promise<void> {
-        const connection = this._connection;
-        if (!connection) return;
+    private async recover(
+        connection: VoiceConnection,
+        generation: number,
+    ): Promise<void> {
         const controller = new AbortController();
         this.recoveryController?.abort();
         this.recoveryController = controller;
-        const recovery = this.options.recovery;
-        const gracePeriodMs = recovery?.gracePeriodMs ?? 5_000;
-        const maxAttempts = recovery?.maxAttempts ?? 3;
-        const readyTimeoutMs =
-            recovery?.readyTimeoutMs ?? this.options.readyTimeoutMs ?? 15_000;
-        const backoffMs = recovery?.backoffMs ?? 100;
+        const token: RecoveryToken = { generation, connection };
         this.setState("reconnecting");
-        let lastError: unknown;
+        let failure: RecoveryFailure = {
+            method: "grace",
+            attempts: 1,
+            cause: new Error(
+                "Voice connection did not recover during grace period",
+            ),
+            connection,
+        };
 
         try {
-            await withAbort(
-                Promise.any([
-                    this.adapter.enterState(
-                        connection,
-                        VoiceConnectionStatus.Ready,
-                        gracePeriodMs,
-                    ),
-                    this.adapter.enterState(
-                        connection,
-                        VoiceConnectionStatus.Signalling,
-                        gracePeriodMs,
-                    ),
-                    this.adapter.enterState(
-                        connection,
-                        VoiceConnectionStatus.Connecting,
-                        gracePeriodMs,
-                    ),
-                ]),
-                controller.signal,
-            );
-            await this.waitForReady(
-                connection,
-                readyTimeoutMs,
-                controller.signal,
-            );
-            this.setState("ready");
+            await this.tryGraceRecovery(token, controller.signal);
+            this.finishRecovery("grace", token);
             return;
         } catch (error) {
-            lastError = error;
+            if (!this.isTokenCurrent(token, controller.signal)) return;
+            failure = { ...failure, cause: error };
         }
 
+        const rejoin = this.options.recovery?.rejoin;
+        const rejoinAttempts = rejoin?.maxAttempts ?? 3;
+        if (rejoinAttempts > 0) {
+            const result = await this.tryRejoinRecovery(
+                token,
+                controller.signal,
+                rejoinAttempts,
+                rejoin?.readyTimeoutMs ?? this.options.readyTimeoutMs ?? 15_000,
+                rejoin?.backoffMs ?? 100,
+            );
+            if (!result) return;
+            if (result === true) {
+                this.finishRecovery("rejoin", token);
+                return;
+            }
+            failure = result;
+        }
+
+        const recreate = this.options.recovery?.recreate;
+        const recreateAttempts = recreate?.maxAttempts ?? 1;
+        if ((recreate?.enabled ?? true) && recreateAttempts > 0) {
+            const result = await this.tryRecreateRecovery(
+                token,
+                controller.signal,
+                recreateAttempts,
+                recreate?.readyTimeoutMs ??
+                    this.options.readyTimeoutMs ??
+                    15_000,
+                recreate?.backoffMs ?? 100,
+            );
+            if (!result) return;
+            if (result === true) {
+                this.finishRecovery("recreate", token);
+                return;
+            }
+            failure = result;
+        }
+
+        if (!this.isRecoveryGenerationCurrent(token, controller.signal)) return;
+        const error = new VoiceConnectionRecoveryError(
+            failure.method,
+            failure.attempts,
+            failure.cause,
+        );
+        this.setState("error");
+        this.runHook(() =>
+            this.options.onRecoveryFailed?.({
+                error,
+                connection: failure.connection,
+            }),
+        );
+        this.reportError(error);
+    }
+
+    private async tryGraceRecovery(
+        token: RecoveryToken,
+        signal: AbortSignal,
+    ): Promise<void> {
+        const gracePeriodMs = this.options.recovery?.gracePeriodMs ?? 5_000;
+        await withAbort(
+            Promise.any([
+                this.adapter.enterState(
+                    token.connection,
+                    VoiceConnectionStatus.Ready,
+                    gracePeriodMs,
+                ),
+                this.adapter.enterState(
+                    token.connection,
+                    VoiceConnectionStatus.Signalling,
+                    gracePeriodMs,
+                ),
+                this.adapter.enterState(
+                    token.connection,
+                    VoiceConnectionStatus.Connecting,
+                    gracePeriodMs,
+                ),
+            ]),
+            signal,
+        );
+        this.assertTokenCurrent(token, signal);
+        await this.waitForReady(
+            token.connection,
+            this.options.recovery?.rejoin?.readyTimeoutMs ??
+                this.options.readyTimeoutMs ??
+                15_000,
+            signal,
+        );
+        this.assertTokenCurrent(token, signal);
+    }
+
+    private async tryRejoinRecovery(
+        token: RecoveryToken,
+        signal: AbortSignal,
+        maxAttempts: number,
+        readyTimeoutMs: number,
+        backoffMs: number,
+    ): Promise<true | RecoveryFailure | undefined> {
+        let lastError: unknown;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            if (controller.signal.aborted || this.explicitDisconnect) return;
+            if (!this.isTokenCurrent(token, signal)) return undefined;
             this.runHook(() =>
-                this.options.onRecoveryAttempt?.(attempt, connection),
+                this.options.onRecoveryAttempt?.({
+                    method: "rejoin",
+                    attempt,
+                    connection: token.connection,
+                }),
             );
             try {
-                if (!connection.rejoin()) {
+                if (!token.connection.rejoin()) {
                     throw new Error("Voice connection rejected rejoin");
                 }
                 await this.waitForReady(
-                    connection,
+                    token.connection,
                     readyTimeoutMs,
-                    controller.signal,
+                    signal,
                 );
-                this.setState("ready");
-                this.runHook(() => this.options.onConnected?.(connection));
-                return;
+                this.assertTokenCurrent(token, signal);
+                return true;
             } catch (error) {
+                if (!this.isTokenCurrent(token, signal)) return undefined;
                 lastError = error;
                 if (attempt < maxAttempts) {
                     try {
-                        await abortableDelay(backoffMs, controller.signal);
-                    } catch (delayError) {
-                        if (
-                            controller.signal.aborted ||
-                            this.explicitDisconnect
-                        ) {
-                            return;
-                        }
-                        lastError = delayError;
+                        await abortableDelay(backoffMs, signal);
+                    } catch {
+                        if (!this.isTokenCurrent(token, signal))
+                            return undefined;
                     }
                 }
             }
         }
+        return {
+            method: "rejoin",
+            attempts: maxAttempts,
+            cause: lastError,
+            connection: token.connection,
+        };
+    }
 
-        if (controller.signal.aborted || this.explicitDisconnect) return;
-        const error = new VoiceConnectionRecoveryError(maxAttempts, lastError);
-        this.setState("error");
-        this.runHook(() => this.options.onRecoveryFailed?.(error, connection));
-        this.reportError(error);
+    private async tryRecreateRecovery(
+        token: RecoveryToken,
+        signal: AbortSignal,
+        maxAttempts: number,
+        readyTimeoutMs: number,
+        backoffMs: number,
+    ): Promise<true | RecoveryFailure | undefined> {
+        const channel = this._channel;
+        if (!channel) return undefined;
+        let lastError: unknown;
+        let failureConnection = token.connection;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            if (!this.isRecoveryGenerationCurrent(token, signal)) {
+                return undefined;
+            }
+            this.runHook(() =>
+                this.options.onRecoveryAttempt?.({
+                    method: "recreate",
+                    attempt,
+                    connection: token.connection,
+                }),
+            );
+
+            const oldConnection = token.connection;
+            this.detachConnection(oldConnection);
+            if (this._connection === oldConnection) {
+                this._connection = undefined;
+            }
+            this.destroyConnection(oldConnection);
+            token.generation = ++this.lifecycleGeneration;
+
+            let connection: VoiceConnection | undefined;
+            try {
+                this.assertRecoveryGeneration(token, signal);
+                connection = this.adapter.join(this.joinOptions(channel));
+                failureConnection = connection;
+                token.connection = connection;
+                this._connection = connection;
+                this.attachConnection(connection);
+                await this.waitForReady(connection, readyTimeoutMs, signal);
+                this.assertTokenCurrent(token, signal);
+                return true;
+            } catch (error) {
+                lastError = error;
+                if (connection && this._connection === connection) {
+                    this.detachConnection(connection);
+                    this.destroyConnection(connection);
+                    this._connection = undefined;
+                } else if (connection && connection !== this._connection) {
+                    this.destroyConnection(connection);
+                }
+                if (!this.isRecoveryGenerationCurrent(token, signal)) {
+                    return undefined;
+                }
+                if (attempt < maxAttempts) {
+                    try {
+                        await abortableDelay(backoffMs, signal);
+                    } catch {
+                        if (!this.isRecoveryGenerationCurrent(token, signal)) {
+                            return undefined;
+                        }
+                    }
+                }
+            }
+        }
+        return {
+            method: "recreate",
+            attempts: maxAttempts,
+            cause: lastError,
+            connection: failureConnection,
+        };
+    }
+
+    private finishRecovery(
+        method: VoiceConnectionRecoveryMethod,
+        token: RecoveryToken,
+    ): void {
+        this.setState("ready");
+        this.runHook(() =>
+            this.options.onRecovered?.({
+                method,
+                connection: token.connection,
+            }),
+        );
     }
 
     private waitForReady(
         connection: VoiceConnection,
         timeoutMs: number,
-        signal: AbortSignal | undefined,
+        signal: AbortSignal,
     ): Promise<VoiceConnection> {
         return withAbort(
             this.adapter.enterState(
@@ -347,7 +555,18 @@ export class VoiceConnectionController {
         );
     }
 
+    private joinOptions(channel: VoiceBasedChannel) {
+        return {
+            channelId: channel.id,
+            guildId: channel.guild.id,
+            adapterCreator: channel.guild.voiceAdapterCreator,
+            selfMute: this.options.selfMute ?? false,
+            selfDeaf: this.options.selfDeaf ?? false,
+        };
+    }
+
     private attachConnection(connection: VoiceConnection): void {
+        this.detachConnection(connection);
         connection.on(
             VoiceConnectionStatus.Disconnected,
             this.handleDisconnected,
@@ -355,12 +574,91 @@ export class VoiceConnectionController {
         connection.on("stateChange", this.handleConnectionStateChange);
     }
 
-    private detachConnection(): void {
-        this._connection?.off(
+    private detachConnection(connection: VoiceConnection): void {
+        connection.off(
             VoiceConnectionStatus.Disconnected,
             this.handleDisconnected,
         );
-        this._connection?.off("stateChange", this.handleConnectionStateChange);
+        connection.off("stateChange", this.handleConnectionStateChange);
+    }
+
+    private destroyConnection(connection: VoiceConnection): void {
+        if (connection.state.status === VoiceConnectionStatus.Destroyed) return;
+        connection.destroy();
+    }
+
+    private assertConnectCurrent(
+        generation: number,
+        signal: AbortSignal,
+        connection?: VoiceConnection,
+    ): void {
+        if (
+            signal.aborted ||
+            generation !== this.lifecycleGeneration ||
+            this.explicitDisconnect ||
+            this._state === "destroyed" ||
+            (connection !== undefined && this._connection !== connection)
+        ) {
+            throw new VoiceConnectionConnectError(
+                "Voice connection request was cancelled",
+                signal.reason,
+            );
+        }
+    }
+
+    private assertTokenCurrent(
+        token: RecoveryToken,
+        signal: AbortSignal,
+    ): void {
+        if (!this.isTokenCurrent(token, signal)) {
+            throw (
+                signal.reason ??
+                new DOMException("Stale recovery", "AbortError")
+            );
+        }
+    }
+
+    private assertRecoveryGeneration(
+        token: RecoveryToken,
+        signal: AbortSignal,
+    ): void {
+        if (!this.isRecoveryGenerationCurrent(token, signal)) {
+            throw (
+                signal.reason ??
+                new DOMException("Stale recovery", "AbortError")
+            );
+        }
+    }
+
+    private isTokenCurrent(token: RecoveryToken, signal: AbortSignal): boolean {
+        return (
+            this.isRecoveryGenerationCurrent(token, signal) &&
+            this._connection === token.connection
+        );
+    }
+
+    private isRecoveryGenerationCurrent(
+        token: RecoveryToken,
+        signal: AbortSignal,
+    ): boolean {
+        return (
+            !signal.aborted &&
+            token.generation === this.lifecycleGeneration &&
+            !this.explicitDisconnect &&
+            this._state !== "destroyed"
+        );
+    }
+
+    private isRecoveryCurrent(
+        generation: number,
+        connection: VoiceConnection,
+    ): boolean {
+        return (
+            generation === this.lifecycleGeneration &&
+            this._connection === connection &&
+            !this.explicitDisconnect &&
+            this._state !== "destroyed"
+        );
     }
 
     private setState(state: VoiceConnectionState): void {
