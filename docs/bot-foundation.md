@@ -69,5 +69,6 @@ runtime handler、生成済みbot factoryの`clientFactory`まで保持します
 標準`Client`と派生Clientのどちらでも、runtimeへ渡す`clientFactory`は必須です。
 bot-kitはClientの具体型を推測して生成せず、factoryが返したinstanceのlifecycleを管理します。
 
-音声connection、Player、Guild runtime、DB、個別Command、Application CommandのREST同期は
-利用側の責務です。
+単一guildの音声connection transport lifecycle（Ready待機、channel切替、切断復旧、
+cleanup）は`voice` packageが所有します。Audio Player、Queue、guild単位のController管理、
+DB、個別Command、Application CommandのREST同期は利用側の責務です。
