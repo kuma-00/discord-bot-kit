@@ -21,6 +21,9 @@ const configErrorCodes = new Set<ConfigErrorCode>([
     "validation-default",
     "validation-convergence",
     "secret-template",
+    "migration",
+    "migration-options",
+    "migration-write",
     "unknown",
 ]);
 const configErrorCauses = new Set<ConfigErrorCause>([
@@ -31,6 +34,7 @@ const configErrorCauses = new Set<ConfigErrorCause>([
     "parse",
     "unsafe-path",
     "validation",
+    "migration",
     "unknown",
 ]);
 const configErrorSources = new Set([
@@ -93,6 +97,12 @@ function safeMessage(code: ConfigErrorCode): string {
             return "Configuration validation did not converge after applying defaults";
         case "secret-template":
             return "Configuration template contains a secret path";
+        case "migration":
+            return "Configuration migration failed";
+        case "migration-options":
+            return "Configuration migration options are invalid";
+        case "migration-write":
+            return "Unable to write migrated configuration file";
         default:
             return "Configuration loading failed";
     }

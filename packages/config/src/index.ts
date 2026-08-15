@@ -12,6 +12,7 @@ export type {
     ConfigErrorCode,
     ConfigErrorDiagnostic,
     ConfigIssue,
+    ConfigMigration,
     ConfigSchema,
     DeepPartial,
     DefinedConfigFile,

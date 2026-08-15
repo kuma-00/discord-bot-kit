@@ -14,6 +14,40 @@ const appConfig = defineConfig({
 const config = await loadDefinedConfig(appConfig);
 ```
 
+## Versioned YAML migrations
+
+Set a positive integer `version` and provide every one-step migration from v1
+to that version. A YAML document without `version` is treated as v1. Migrations
+run only on the YAML layer, before defaults, environment bindings, and explicit
+overrides are merged:
+
+```ts
+const appConfig = defineConfig({
+    schema: currentConfigSchema,
+    version: 3,
+    migrations: [
+        { from: 1, to: 2, migrate: migrateV1ToV2 },
+        { from: 2, to: 3, migrate: migrateV2ToV3 },
+    ],
+});
+```
+
+Migration functions may be synchronous or asynchronous and must return a YAML
+mapping. The loader owns the top-level `version` field, which remains part of
+the validated output schema. YAML strings migrate in memory only. After a file
+migration passes final validation, the original is preserved as a non-
+overwriting `.v<old>.bak` file and the migrated YAML atomically replaces it.
+The backup and replacement preserve the original file's permission mode.
+For a symlinked configuration path, migration updates the resolved target and
+leaves the symlink intact; the backup is stored beside that target. Concurrent
+migrations of the same resolved file use one adjacent heartbeat lease, even
+through different symlinks. A competing loader fails without replacing the
+file, while a stale lease left by an abnormal exit is recovered. Symlink
+retargeting, inode replacement, and content changes detected before replacement
+also stop migration, although writers that do not honor the lease cannot be
+excluded after the final check. Re-serialization does not preserve YAML
+comments or formatting.
+
 ## Safe error diagnostics
 
 Use `toConfigDiagnostics` at the application boundary to convert any thrown

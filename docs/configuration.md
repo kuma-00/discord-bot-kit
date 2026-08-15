@@ -84,6 +84,29 @@ const config: ApplicationConfig = await loadDefinedConfig(applicationConfig);
 
 `secret: true`のbinding先はテンプレートへ含められません。secretや必須値は環境変数または利用者が編集した設定ファイルから供給してください。値が不足してschema検証に失敗した場合、loaderは`ConfigError`で停止します。
 
+## バージョンと自動移行
+
+`version`と`migrations`を指定すると、トップレベルの整数`version`でYAMLを管理できます。versionがない既存YAMLはv1として扱い、1段階ずつ最新版へ移行します。移行対象はYAMLだけで、defaults、environment binding、overrideは現行形式のsourceとして移行後に統合されます。
+
+```ts
+const applicationConfig = defineConfig({
+    schema: applicationConfigSchema,
+    version: 3,
+    migrations: [
+        { from: 1, to: 2, migrate: renameLegacyField },
+        { from: 2, to: 3, migrate: addBackendSettings },
+    ],
+});
+```
+
+各migrationはobjectを返す同期または非同期関数です。`from`から`to`は必ず1ずつ増やし、v1から現行版まで欠落や重複のない経路を定義します。ローダーが各段階の`version`を書き換えるため、migration関数自身でversionを管理する必要はありません。現行版より新しい設定、不正なversion、経路の欠落、migrationの失敗は`ConfigError`になります。
+
+YAML文字列はメモリ上だけ移行します。ファイルは、移行後の全sourceを統合して現行schemaの検証に成功してから書き換えます。元ファイルは`config.yaml.v1.bak`のような名前で残し、同名のbackupがあれば別名を使います。backupと置換後のファイルは元ファイルのpermission modeを維持します。指定pathがsymlinkの場合は解決した実ファイルを移行するため、symlink自体は維持され、backupも実ファイルの隣に作成されます。
+
+同じ実ファイルに対する並行移行は、実ファイルに隣接する`.migration.lock`リースで排他します。異なるsymlinkから同じ実ファイルを参照しても同じlockを使い、競合したloaderは元ファイルを書き換えず`ConfigError`で停止します。lockは処理中にheartbeatを更新し、異常終了で残った更新の古いlockは後続の移行が回収します。
+
+外部processによるsymlinkの付け替え、実ファイルの差し替え、内容変更も置換直前に再確認し、検出した場合は上書きしません。ただし、このlockを利用しない外部processが最終確認後に書き込むことまでは排他できません。最新版は実ファイルと同じdirectoryの一時ファイルから原子的に置換されます。再生成したYAMLではコメントや元の書式が失われますが、原文はbackupから復元できます。成功時は`file-migrated` diagnosticで移行元・移行先・指定pathを通知します。
+
 ## 検証失敗時のdefault
 
 `onValidationError`の既定値は`"throw"`です。`"use-defaults"`では、schema issueが示すpathと同じpathにdefaultが存在する場合だけ、その項目をランタイム上でdefaultへ戻して再検証します。
@@ -92,7 +115,7 @@ const config: ApplicationConfig = await loadDefinedConfig(applicationConfig);
 - defaultがないissue、pathのないissue、不正なpath、再検証で解消しないissueは停止します。
 - `__proto__`、`constructor`、`prototype`を含むenvironment binding pathは拒否されます。
 
-`onDiagnostic`では`file-created`、`default-used`、`configuration-required`を受け取れます。loggerへ接続できますが、callback内でも設定object全体やsecret environment値を記録しないでください。
+`onDiagnostic`では`file-created`、`file-migrated`、`default-used`、`configuration-required`を受け取れます。loggerへ接続できますが、callback内でも設定object全体やsecret environment値を記録しないでください。
 
 ## エラーとsecret
 

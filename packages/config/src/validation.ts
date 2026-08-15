@@ -7,6 +7,11 @@ import type {
     ValidationErrorPolicy,
 } from "./types.ts";
 
+interface ValidationResult<T> {
+    readonly value: T;
+    readonly defaultsApplied: boolean;
+}
+
 export async function validateConfig<T>(
     schema: ConfigSchema<T>,
     candidate: unknown,
@@ -14,7 +19,7 @@ export async function validateConfig<T>(
     policy: ValidationErrorPolicy,
     onDiagnostic?: ConfigDiagnosticHandler,
     secretPaths: ReadonlyArray<ReadonlyArray<string | number>> = [],
-): Promise<T> {
+): Promise<ValidationResult<T>> {
     const current = structuredClone(candidate);
     const repairedPaths = new Set<string>();
     const maximumAttempts = 32;
@@ -33,7 +38,12 @@ export async function validateConfig<T>(
                 { code: "validation", cause: "unknown", secretPaths },
             );
         }
-        if (result.issues === undefined) return result.value;
+        if (result.issues === undefined) {
+            return {
+                value: result.value,
+                defaultsApplied: repairedPaths.size > 0,
+            };
+        }
         if (policy === "throw" || !isRecord(current)) {
             for (const issue of result.issues) {
                 const keys =

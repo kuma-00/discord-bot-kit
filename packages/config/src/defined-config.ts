@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { createConfigFile } from "./config-file.ts";
 import { emitDiagnostic } from "./diagnostics.ts";
 import { ConfigError } from "./errors.ts";
-import { loadConfig } from "./load-config.ts";
+import { loadConfig, validateMigrations } from "./load-config.ts";
 import { dottedPathKeys, pathKeys } from "./path.ts";
 import type {
     ConfigDefinition,
@@ -30,6 +30,15 @@ export async function loadDefinedConfig<
     const file = resolve(configuredPath);
     const shouldCreate = definition.file?.create ?? true;
     const onDiagnostic = options.onDiagnostic ?? definition.onDiagnostic;
+    const bindingPaths = (definition.bindings ?? []).map((binding) => ({
+        binding,
+        path: dottedPathKeys(binding.path),
+    }));
+    const secretPaths = bindingPaths
+        .filter(({ binding }) => binding.secret)
+        .map(({ path }) => path);
+
+    validateMigrations(definition.version, definition.migrations, secretPaths);
 
     if (!(await Bun.file(file).exists()) && shouldCreate) {
         await createConfigFile(
@@ -37,6 +46,7 @@ export async function loadDefinedConfig<
             definition.file?.template ?? {},
             definition.bindings ?? [],
             onDiagnostic,
+            definition.version,
         );
     }
 
@@ -60,6 +70,12 @@ export async function loadDefinedConfig<
                 ? {}
                 : { onValidationError: definition.onValidationError }),
             ...(onDiagnostic === undefined ? {} : { onDiagnostic }),
+            ...(definition.version === undefined
+                ? {}
+                : { version: definition.version }),
+            ...(definition.migrations === undefined
+                ? {}
+                : { migrations: definition.migrations }),
         });
     } catch (error) {
         if (error instanceof ConfigError && error.source === "validation") {

@@ -15,6 +15,29 @@ reference. Before coding, inspect the installed package exports and signatures.
 5. Catch `ConfigError` only where the application can report the failed source
    and terminate safely.
 
+For versioned YAML, include the current positive integer `version` in the
+application schema and loader options. Register a complete sequence of
+one-version migrations from v1 to the current version. A file without a
+version is treated as v1. Each synchronous or asynchronous migration receives
+the YAML mapping only and returns the next mapping; defaults, environment
+bindings, and overrides are merged afterward in their current shape.
+
+File migrations are written only after final schema validation succeeds. The
+loader preserves the original in a non-overwriting `.v<old>.bak` file and then
+atomically replaces the YAML while preserving the original permission mode on
+both files. Symlinked paths update their resolved target without replacing the
+symlink, and backups are stored beside the target. Migrations of the same target
+share an adjacent heartbeat lease even through different symlinks; competing
+loaders fail without replacing the file, while stale leases are recovered.
+Symlink retargeting, inode replacement, and content changes detected before
+replacement also stop migration, but writers that do not honor the lease cannot
+be excluded after the final check. Comments and original formatting are
+retained in the backup rather than the rewritten file. Direct YAML strings
+migrate only in memory. Test future and invalid versions, missing migration
+steps, migration failure, validation failure without writeback, symlink
+preservation, backup creation and permissions, concurrent migration, stale
+lease recovery, and the `file-migrated` diagnostic.
+
 For a logger-safe error boundary, import `toConfigDiagnostics` and pass its
 result to the consumer's logger:
 

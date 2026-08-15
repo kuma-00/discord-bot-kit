@@ -92,6 +92,119 @@ describe("defined configuration", () => {
         }
     });
 
+    test("adds the current version to generated templates", async () => {
+        const directory = await mkdtemp(
+            join(tmpdir(), "bot-kit-config-versioned-"),
+        );
+        const file = join(directory, "config.yaml");
+        try {
+            const definition = defineConfig({
+                schema: configSchema,
+                version: 1,
+                file: {
+                    path: file,
+                    template: { port: 4201, nested: { value: "versioned" } },
+                },
+                defaults: { token: "default" },
+            });
+            await loadDefinedConfig(definition);
+            expect(await readFile(file, "utf8")).toContain("version: 1");
+        } finally {
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
+    test("rejects scalar and array templates when versioned without creating a file", async () => {
+        for (const template of ["scalar", "- array-item\n"]) {
+            const directory = await mkdtemp(
+                join(tmpdir(), "bot-kit-config-invalid-template-"),
+            );
+            const file = join(directory, "config.yaml");
+            try {
+                const definition = defineConfig({
+                    schema: configSchema,
+                    version: 1,
+                    file: { path: file, template },
+                });
+                await expect(
+                    loadDefinedConfig(definition),
+                ).rejects.toMatchObject({
+                    metadata: {
+                        code: "migration-options",
+                        cause: "validation",
+                    },
+                });
+                expect(await Bun.file(file).exists()).toBe(false);
+            } finally {
+                await rm(directory, { recursive: true, force: true });
+            }
+        }
+    });
+
+    test("validates versioned migration options before creating a file", async () => {
+        for (const definition of [
+            defineConfig({
+                schema: configSchema,
+                version: 0,
+                file: { template: {} },
+            }),
+            defineConfig({
+                schema: configSchema,
+                version: 2,
+                file: { template: {} },
+            }),
+            defineConfig({
+                schema: configSchema,
+                version: 3,
+                migrations: [{ from: 1, to: 2, migrate: (value) => value }],
+                file: { template: {} },
+            }),
+        ]) {
+            const directory = await mkdtemp(
+                join(tmpdir(), "bot-kit-config-invalid-migrations-"),
+            );
+            const file = join(directory, "config.yaml");
+            try {
+                await expect(
+                    loadDefinedConfig(definition, { file }),
+                ).rejects.toMatchObject({
+                    metadata: {
+                        code: "migration-options",
+                        cause: "validation",
+                    },
+                });
+                expect(await Bun.file(file).exists()).toBe(false);
+            } finally {
+                await rm(directory, { recursive: true, force: true });
+            }
+        }
+    });
+
+    test("validates unsafe non-secret binding paths before creating a file", async () => {
+        const directory = await mkdtemp(
+            join(tmpdir(), "bot-kit-config-invalid-binding-"),
+        );
+        const file = join(directory, "config.yaml");
+        try {
+            const definition = defineConfig({
+                schema: configSchema,
+                file: { template: {} },
+                bindings: [{ env: "UNSAFE", path: "__proto__.value" }],
+            });
+            await expect(
+                loadDefinedConfig(definition, { file }),
+            ).rejects.toMatchObject({
+                metadata: {
+                    code: "environment-path",
+                    cause: "unsafe-path",
+                },
+            });
+            expect(await Bun.file(file).exists()).toBe(false);
+        } finally {
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
     test("does not overwrite a file during concurrent creation", async () => {
         const directory = await mkdtemp(join(tmpdir(), "bot-kit-config-"));
         const file = join(directory, "config.yaml");

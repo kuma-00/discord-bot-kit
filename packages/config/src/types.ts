@@ -46,6 +46,9 @@ export type ConfigErrorCode =
     | "validation-default"
     | "validation-convergence"
     | "secret-template"
+    | "migration"
+    | "migration-options"
+    | "migration-write"
     | "unknown";
 
 /** Safe high-level classification of the underlying failure. */
@@ -57,6 +60,7 @@ export type ConfigErrorCause =
     | "parse"
     | "unsafe-path"
     | "validation"
+    | "migration"
     | "unknown";
 
 /** Logger-neutral schema issue with secret-bearing messages removed. */
@@ -115,6 +119,12 @@ export type ConfigDiagnostic =
           readonly type: "configuration-required";
           readonly path?: ReadonlyArray<string | number>;
           readonly environment?: string;
+      }
+    | {
+          readonly type: "file-migrated";
+          readonly from: number;
+          readonly to: number;
+          readonly path: string;
       };
 
 /** Receives structured configuration diagnostics. */
@@ -133,6 +143,17 @@ export interface LoadConfigOptions<T> {
     readonly override?: unknown;
     readonly onValidationError?: ValidationErrorPolicy;
     readonly onDiagnostic?: ConfigDiagnosticHandler;
+    /** Current configuration version. Enables YAML migrations when provided. */
+    readonly version?: number;
+    /** Sequential migrations that upgrade one configuration version at a time. */
+    readonly migrations?: ReadonlyArray<ConfigMigration>;
+}
+
+/** A single pure transformation from one configuration version to the next. */
+export interface ConfigMigration {
+    readonly from: number;
+    readonly to: number;
+    readonly migrate: (config: unknown) => unknown | Promise<unknown>;
 }
 
 /** File behavior used by a defined configuration. */
@@ -150,6 +171,8 @@ export interface ConfigDefinition<TSchema extends ConfigSchema<unknown>> {
     readonly bindings?: ReadonlyArray<EnvironmentBinding>;
     readonly onValidationError?: ValidationErrorPolicy;
     readonly onDiagnostic?: ConfigDiagnosticHandler;
+    readonly version?: number;
+    readonly migrations?: ReadonlyArray<ConfigMigration>;
 }
 
 /** Infers the validated output type of a configuration definition. */
