@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/kuma-00/discord-bot-kit/compare/v1.4.0...v1.5.0) (2026-09-12)
+
+
+### Features
+
+* own SSE connection lifecycle in transport ([968f4ed](https://github.com/kuma-00/discord-bot-kit/commit/968f4ed7830f21d828c8f652552990a6514c63e4))
+
 ## [1.4.0](https://github.com/kuma-00/discord-bot-kit/compare/v1.3.0...v1.4.0) (2026-08-15)
 
 
