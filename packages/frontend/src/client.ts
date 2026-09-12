@@ -11,12 +11,36 @@ import {
     HttpClient,
     type HttpClientOptions,
     type RequestOptions,
+    type SseConnectionFailure,
+    type SseReconnectOptions,
     SseSubscription,
     type TransportFailureDetails,
 } from "@kuma-00/bot-kit-transport";
 
 /** Observable state of a frontend realtime connection. */
 export type RealtimeConnectionState = "idle" | "connecting" | "open" | "closed";
+
+/** Configuration for a framework-neutral realtime controller. */
+export interface RealtimeControllerOptions<
+    TType extends string,
+    TVersion extends number,
+    TPayloadSchema extends StandardSchemaV1,
+> {
+    /** SSE endpoint URL. */
+    readonly url: string;
+    /** Contract used to validate every received event envelope. */
+    readonly contract: EventContract<TType, TVersion, TPayloadSchema>;
+    /** Fetch implementation used for every connection attempt. */
+    readonly fetch?: FetchLike;
+    /** Request headers merged with transport-owned SSE headers. */
+    readonly headers?: Readonly<Record<string, string>>;
+    /** Maps to Fetch credentials `include` when true and `same-origin` when false. */
+    readonly withCredentials?: boolean;
+    /** Reconnect policy, or false to disable automatic reconnects. */
+    readonly reconnect?: false | SseReconnectOptions;
+    /** Maximum number of characters buffered by the SSE parser. Defaults to 1048576. */
+    readonly maxBufferSize?: number;
+}
 
 /** Authentication state independent of any UI framework. */
 export type AuthenticationState<TUser> =
@@ -74,7 +98,7 @@ export class FrontendApiClient {
     }
 }
 
-/** Framework-neutral controller for a standard EventSource subscription. */
+/** Framework-neutral controller for a transport-owned SSE subscription. */
 export class RealtimeController<
     TType extends string,
     TVersion extends number,
@@ -87,32 +111,74 @@ export class RealtimeController<
     > = new ObservableValue<
         EventEnvelope<TType, SchemaOutput<TPayloadSchema>> | undefined
     >(undefined);
+    /** Latest classified connection failure, cleared on open or explicit stop. */
+    readonly failure: ObservableValue<SseConnectionFailure | undefined> =
+        new ObservableValue<SseConnectionFailure | undefined>(undefined);
     private readonly subscription: SseSubscription<
         TType,
         TVersion,
         TPayloadSchema
     >;
+    private removeReconnectHints: (() => void) | undefined;
 
-    constructor(options: {
-        readonly url: string;
-        readonly contract: EventContract<TType, TVersion, TPayloadSchema>;
-        readonly fetch?: FetchLike;
-        readonly headers?: Readonly<Record<string, string>>;
-    }) {
+    constructor(
+        options: RealtimeControllerOptions<TType, TVersion, TPayloadSchema>,
+    ) {
         this.subscription = new SseSubscription({
             ...options,
             onEvent: (event) => this.lastEvent.set(event),
-            onStateChange: (state) => this.state.set(state),
+            onConnectionFailure: (failure) => this.failure.set(failure),
+            onStateChange: (state) => {
+                if (state === "open") this.failure.set(undefined);
+                if (state === "closed") this.detachReconnectHints();
+                this.state.set(state);
+            },
         });
     }
 
     /** Starts realtime delivery without requiring the caller to await closure. */
     start(): void {
+        if (this.state.value === "connecting" || this.state.value === "open") {
+            return;
+        }
+        this.failure.set(undefined);
+        this.attachReconnectHints();
         this.subscription.start();
     }
 
-    /** Stops delivery and closes the EventSource synchronously. */
+    /** Stops delivery and closes the current SSE request synchronously. */
     stop(): void {
+        this.failure.set(undefined);
         this.subscription.stop();
+    }
+
+    /** Skips a currently pending reconnect delay. */
+    retryNow(): void {
+        this.subscription.retryNow();
+    }
+
+    private attachReconnectHints(): void {
+        if (
+            this.removeReconnectHints ||
+            typeof window === "undefined" ||
+            typeof document === "undefined"
+        ) {
+            return;
+        }
+        const retry = () => this.subscription.retryNow();
+        const retryWhenVisible = () => {
+            if (document.visibilityState === "visible") retry();
+        };
+        window.addEventListener("online", retry);
+        document.addEventListener("visibilitychange", retryWhenVisible);
+        this.removeReconnectHints = () => {
+            window.removeEventListener("online", retry);
+            document.removeEventListener("visibilitychange", retryWhenVisible);
+            this.removeReconnectHints = undefined;
+        };
+    }
+
+    private detachReconnectHints(): void {
+        this.removeReconnectHints?.();
     }
 }

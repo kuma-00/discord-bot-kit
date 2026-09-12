@@ -60,10 +60,15 @@ Elysia adapterでは入力を次の形でhandlerへ渡します。
 ## SSE
 
 `SseEventBroker`がBackendから複数consumerへイベントを配信します。`SseSubscription`は
-標準`EventSource`の薄い型付きwrapperです。SSE protocol解析、接続life cycle、再接続、
-`retry`、`Last-Event-ID`、HTTP statusとmedia typeの判定は`eventsource`へ委譲し、
-transportはJSONとevent contractの検証だけを担当します。停止は標準APIと同じく
-`close()`相当で同期的に行われます。
+Fetch、SSE parser、接続life cycle、再接続を一元所有する型付きclientです。transportが
+管理するactive attempt、AbortController、stream reader、retry timerはそれぞれ最大1つです。
+`stop()`は同期的に`closed`へ遷移し、保留timerを破棄してFetchとreaderのcancelを開始します。
+`stop()`直後の再startは旧generationのtransport管理処理が終了した後に実行され、古い
+generationのresponse、reader結果、timer callbackは無視されます。
+停止後にFetchが遅れて返したresponse bodyは破棄され、遅れてrejectしても未処理のrejectには
+なりません。注入するFetch実装は基盤resourceを速やかに解放するため`RequestInit.signal`を
+尊重する必要があります。signalを無視する実装でもsubscriptionの停止と再startは妨げませんが、
+transportから停止できない旧Fetch処理が外部実装内に残り、新attemptと重なる可能性があります。
 
 イベントEnvelopeは`id`、`type`、`version`、`occurredAt`、任意の`guildId`、`payload`を持ちます。v0.1.0はSSEのみを提供し、WebSocketは扱いません。
 `createEventRegistry`で複数のevent contractを`type + version`単位に束ねられます。
@@ -72,10 +77,35 @@ JSON不正、未知の契約、payload validation失敗はイベント単位で`
 `connecting`、`open`、`closed`だけを通知します。named eventは契約の`type`、
 通常のeventは`message` listenerで受信します。
 
-`SseSubscription`はEventSourceが受信したeventを受信順に処理します。JSON parse、
+`connecting`は初回接続、再接続attempt、backoff待機を表し、`open`はstatus 200、
+`text/event-stream`、ReadableStream bodyの検証後にstreamを読んでいる状態です。
+`closed`は明示停止または再試行しない恒久failureを表し、active接続とtimerを持ちません。
+接続failureは`onConnectionFailure`へ通知します。network断、予期しない`AbortError`、EOF、
+408、425、429、5xxは再試行し、401、403、404、204、その他の非200、media type不正、
+body不正は恒久failureとして閉じます。明示的な`stop()`に伴うabortはfailure通知しません。
+JSON、event contract、payload、consumer callbackのfailureは従来どおり`onEventError`へ
+イベント単位で通知し、接続を継続します。
+
+SSE parserが保持する未完了lineと未配送eventの合計は、既定で1,048,576文字へ
+制限します。`maxBufferSize`で正の安全な整数へ変更できます。上限超過は
+`invalid-response`の`stream-format`として通知し、再試行せず閉じます。
+SSE仕様上無視できる未知fieldや不正な`retry:`は、接続failureにはしません。
+
+再接続は既定で3秒から始まる指数backoffを使い、2倍ずつ最大30秒まで増加させ、
+±20%のjitterを加えます。retryable HTTP responseの有効な`Retry-After`を最優先し、
+次に最後に受信したSSE `retry:`、最後にclient既定値を使います。`Retry-After`には
+jitterを加えません。すべてのdelayは設定された最大値へclampし、有効な`open`後に
+backoffをresetします。`reconnect: false`では一時failureも再試行しません。
+
+automatic reconnectでは最後に受信したSSE `id:`を`Last-Event-ID`として送信します。
+空の`id:`はcursorをclearし、JSON envelopeの`id`はcursorの代用にしません。
+手動のstop/startは新しいlife cycleとしてcursorをclearします。transportは重複排除や
+切断区間のdomain再同期を行いません。consumerはeventを冪等に適用するか、`open`復帰後に
+HTTPなどのauthoritative sourceから再同期します。
+
+`SseSubscription`はSSE parserが受信したeventを受信順に処理します。JSON parse、
 contract validation、`onEvent`、`onEventError`を含むapplication-level deliveryは
 直列化され、後から受信したeventが先にconsumerへ適用されることを防ぎます。
 `stop()`はnetwork connectionを同期的に閉じ、未実行の旧connection eventを破棄します。
 実行開始済みのcallbackは完了を許可し、新connectionのeventはその完了後に処理します。
-独自のretry clamp、jitter、SSE parser互換層は提供しません。SSE protocol、network
-lifecycle、reconnect、retry、`Last-Event-ID`は引き続き`eventsource`へ委譲します。
+automatic reconnectのattempt間でも同じdelivery chainを使い、受信順を維持します。

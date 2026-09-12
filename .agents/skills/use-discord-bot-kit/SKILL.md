@@ -83,6 +83,8 @@ import one another directly; share runtime contracts instead.
   scanning.
 - Use SSE for the supported realtime path. Do not substitute WebSocket without
   an explicit architecture decision.
+- Let `SseSubscription` own Fetch, parsing, backoff, and reconnection. Do not add
+  a second consumer retry loop or recreate a controller for transient failures.
 
 ## Maintenance
 

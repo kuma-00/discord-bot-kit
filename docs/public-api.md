@@ -10,7 +10,7 @@
 | `config` | config定義、load、公開option・diagnostic型、`ConfigError` | YAML source処理、path merge、validation helper |
 | `contracts` | schema、HTTP contract、event contract・registry、envelope parse | 各責務内のlookup・validation helper |
 | `registry` | config、generator、fragment、公開型、`StaticRegistryError` | filesystem discovery、import path・identifier helper |
-| `transport` | `HttpClient`、SSE parser・subscription、公開option・result型 | response chunk reader、serializer、failure builder |
+| `transport` | `HttpClient`、`SseSubscription`、再接続・failureを含む公開option・result型 | SSE parser、response chunk reader、retry計算、serializer、failure builder |
 | `bot` | command/event定義、registry、dispatcher、lifecycle、generator、公開型・error | operation tracking、dispatch path・policy helper |
 | `voice` | controller、adapter contract・default adapter、公開option・state・error | abort・delay helper |
 | `backend` | route、auth、error mapping、health、SSE broker | serialization・schema boundary helper |

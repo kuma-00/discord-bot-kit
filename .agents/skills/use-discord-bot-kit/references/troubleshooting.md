@@ -49,12 +49,23 @@ Never log API-key header values.
 
 ## SSE Failure
 
-1. Verify the response content type and that the body is a stream.
-2. Test parsing across arbitrary byte and line chunk boundaries.
-3. Validate the event envelope and payload contract.
-4. Confirm `Last-Event-ID`, server `retry`, and exponential backoff behavior.
-5. Confirm that abort stops active reads and pending backoff.
-6. Confirm that server subscribers and frontend listeners are removed.
+1. Inspect the connection failure kind, status, `retrying`, and `retryInMs`;
+   never log configured header values.
+2. Treat `connecting` as active connection or backoff work. A `closed` state
+   after 401/403/404/204 or an invalid response requires corrected external
+   state and an explicit restart.
+3. Verify the response content type and that the body is a stream.
+4. Test parsing across arbitrary byte and line chunk boundaries, including the
+   configured `maxBufferSize`; an oversized incomplete event closes permanently
+   as `stream-format`.
+5. Validate the event envelope and payload contract separately from connection
+   failures; event validation failure does not close the stream.
+6. Confirm `Last-Event-ID`, `Retry-After`, server `retry:`, exponential backoff,
+   jitter, and reset after open.
+7. Confirm that abort stops active reads and pending backoff, and that only one
+   Fetch exists per subscription.
+8. Confirm that server subscribers and frontend online/visibility listeners are
+   removed.
 
 Do not switch to WebSocket as a repair; SSE is the supported realtime transport.
 

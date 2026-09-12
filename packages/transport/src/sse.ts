@@ -8,22 +8,77 @@ import {
     type SchemaOutput,
     type StandardSchemaV1,
 } from "@kuma-00/bot-kit-contracts";
-import { EventSource, type FetchLike as EventSourceFetch } from "eventsource";
 import type { FetchLike } from "./http.ts";
+import { SseConnection } from "./sse-connection.ts";
 
-/** Standard EventSource connection states. */
+/** Observable lifecycle states for an SSE connection. */
 export type SseConnectionState = "connecting" | "open" | "closed";
 
-/** Configuration for a typed EventSource subscription. */
+/** Phase in which an SSE connection failure occurred. */
+export type SseConnectionFailurePhase = "connect" | "response" | "stream";
+
+interface SseFailureContext {
+    readonly phase: SseConnectionFailurePhase;
+    readonly attempt: number;
+    readonly retrying: boolean;
+    readonly retryInMs?: number;
+}
+
+/**
+ * A classified SSE connection failure.
+ *
+ * Event payload validation and consumer callback failures are reported
+ * separately through `onEventError`.
+ */
+export type SseConnectionFailure =
+    | (SseFailureContext & {
+          readonly kind: "network";
+          readonly cause: unknown;
+      })
+    | (SseFailureContext & {
+          readonly kind: "aborted";
+          readonly cause: unknown;
+      })
+    | (SseFailureContext & {
+          readonly kind: "eof";
+      })
+    | (SseFailureContext & {
+          readonly kind: "http";
+          readonly status: number;
+      })
+    | (SseFailureContext & {
+          readonly kind: "invalid-response";
+          readonly status: number;
+          readonly reason: "content-type" | "missing-body" | "stream-format";
+          readonly cause?: unknown;
+      });
+
+/** Client-controlled SSE reconnect policy. */
+export interface SseReconnectOptions {
+    /** Delay before the first reconnect attempt. Defaults to 3000 ms. */
+    readonly initialDelayMs?: number;
+    /** Maximum reconnect delay, including server hints. Defaults to 30000 ms. */
+    readonly maxDelayMs?: number;
+    /** Exponential multiplier applied after consecutive failures. Defaults to 2. */
+    readonly multiplier?: number;
+    /** Symmetric random jitter ratio from 0 to 1. Defaults to 0.2. */
+    readonly jitterRatio?: number;
+}
+
+/** Configuration for a typed SSE subscription. */
 export interface SseSubscriptionOptions<
     TType extends string,
     TVersion extends number,
     TPayloadSchema extends StandardSchemaV1,
     TContracts extends readonly AnyEventContract[] = readonly [],
 > {
+    /** Absolute or relative SSE endpoint URL accepted by the configured fetch. */
     readonly url: string;
+    /** Single event contract. Exactly one of `contract` and `contracts` is required. */
     readonly contract?: EventContract<TType, TVersion, TPayloadSchema>;
+    /** Event registry. Exactly one of `contract` and `contracts` is required. */
     readonly contracts?: EventRegistry<TContracts>;
+    /** Receives validated event envelopes in stream order. */
     readonly onEvent: (
         event: TContracts extends readonly []
             ? EventEnvelope<TType, SchemaOutput<TPayloadSchema>>
@@ -35,22 +90,36 @@ export interface SseSubscriptionOptions<
         event: MessageEvent,
     ) => void | Promise<void>;
     /**
-     * Observes connection state without delaying EventSource lifecycle work.
+     * Observes connection state without delaying lifecycle work.
      * Synchronous throws and rejected promises are contained.
      */
     readonly onStateChange?: (
         state: SseConnectionState,
     ) => void | Promise<void>;
+    /**
+     * Receives classified connection failures and the selected reconnect action.
+     * Synchronous throws and rejected promises are contained.
+     */
+    readonly onConnectionFailure?: (
+        failure: SseConnectionFailure,
+    ) => void | Promise<void>;
+    /** Fetch implementation used for every connection attempt. */
     readonly fetch?: FetchLike;
+    /** Request headers merged with transport-owned SSE headers. */
     readonly headers?: Readonly<Record<string, string>>;
+    /** Maps to Fetch credentials `include` when true and `same-origin` when false. */
     readonly withCredentials?: boolean;
+    /** Reconnect policy, or false to close after the first connection failure. */
+    readonly reconnect?: false | SseReconnectOptions;
+    /** Maximum number of characters buffered by the SSE parser. Defaults to 1048576. */
+    readonly maxBufferSize?: number;
 }
 
 /**
- * A typed wrapper around the standard EventSource API.
+ * A typed SSE subscription with transport-owned parsing and reconnects.
  *
- * EventSource owns parsing, reconnects, retry directives, Last-Event-ID, and
- * connection validation. This wrapper only validates JSON event envelopes.
+ * Delivery is serial. Connection failures are classified independently from
+ * event JSON, contract validation, and consumer callback failures.
  */
 export class SseSubscription<
     TType extends string,
@@ -58,9 +127,7 @@ export class SseSubscription<
     TPayloadSchema extends StandardSchemaV1,
     TContracts extends readonly AnyEventContract[] = readonly [],
 > {
-    private source: EventSource | undefined;
-    private state: SseConnectionState = "closed";
-    private lifecycleVersion = 0;
+    private readonly connection: SseConnection;
     private deliveryChain: Promise<void> = Promise.resolve();
 
     constructor(
@@ -79,111 +146,67 @@ export class SseSubscription<
                 "SseSubscription requires exactly one of contract or contracts",
             );
         }
-    }
-
-    /** The underlying EventSource readyState. */
-    get readyState(): number {
-        return this.source?.readyState ?? EventSource.CLOSED;
-    }
-
-    /** Opens the EventSource connection. Repeated calls while active are ignored. */
-    start(): void {
-        if (this.source && this.source.readyState !== EventSource.CLOSED)
-            return;
-
-        const lifecycleVersion = ++this.lifecycleVersion;
-        this.emitState("connecting");
-        if (lifecycleVersion !== this.lifecycleVersion) return;
-
-        const fetch = this.createFetch();
-        let source: EventSource;
-        try {
-            source = new EventSource(this.options.url, {
-                ...(this.options.withCredentials === undefined
-                    ? {}
-                    : { withCredentials: this.options.withCredentials }),
-                ...(fetch === undefined ? {} : { fetch }),
-            });
-        } catch (error) {
-            if (lifecycleVersion === this.lifecycleVersion)
-                this.emitState("closed");
-            throw error;
-        }
-        if (lifecycleVersion !== this.lifecycleVersion) {
-            source.close();
-            return;
-        }
-        this.source = source;
-
-        source.addEventListener("open", (event) => {
-            if ("data" in event) return;
-            if (this.source === source) this.emitState("open");
-        });
-        source.addEventListener("error", (event) => {
-            if ("data" in event) return;
-            if (this.source !== source) return;
-            this.emitState(
-                source.readyState === EventSource.CLOSED
-                    ? "closed"
-                    : "connecting",
-            );
-        });
 
         const eventTypes = new Set<string>(["message"]);
-        if (this.options.contract) {
-            eventTypes.add(this.options.contract.type);
+        if (options.contract) {
+            eventTypes.add(options.contract.type);
         } else {
-            for (const contract of this.options.contracts?.contracts ?? []) {
+            for (const contract of options.contracts?.contracts ?? []) {
                 eventTypes.add(contract.type);
             }
         }
-        for (const eventType of eventTypes) {
-            source.addEventListener(eventType, (event) => {
-                if (!("data" in event)) return;
-                this.enqueueEvent(event, source, lifecycleVersion);
-            });
-        }
+
+        this.connection = new SseConnection({
+            url: options.url,
+            ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+            ...(options.headers === undefined
+                ? {}
+                : { headers: options.headers }),
+            ...(options.withCredentials === undefined
+                ? {}
+                : { withCredentials: options.withCredentials }),
+            ...(options.reconnect === undefined
+                ? {}
+                : { reconnect: options.reconnect }),
+            ...(options.maxBufferSize === undefined
+                ? {}
+                : { maxBufferSize: options.maxBufferSize }),
+            eventTypes,
+            onEvent: (event, lifecycle) => this.enqueueEvent(event, lifecycle),
+            ...(options.onStateChange === undefined
+                ? {}
+                : { onStateChange: options.onStateChange }),
+            ...(options.onConnectionFailure === undefined
+                ? {}
+                : { onConnectionFailure: options.onConnectionFailure }),
+        });
     }
 
-    /** Closes the EventSource connection synchronously. */
+    /** EventSource-compatible ready state: 0 connecting, 1 open, or 2 closed. */
+    get readyState(): number {
+        return this.connection.readyState;
+    }
+
+    /** Starts delivery. Repeated calls while active are ignored. */
+    start(): void {
+        this.connection.start();
+    }
+
+    /** Stops delivery, cancels pending work, and transitions to closed. */
     stop(): void {
-        this.lifecycleVersion++;
-        this.source?.close();
-        this.source = undefined;
-        this.emitState("closed");
+        this.connection.stop();
     }
 
-    private createFetch(): EventSourceFetch | undefined {
-        const fetchImplementation = this.options.fetch;
-        const headers = this.options.headers;
-        if (!fetchImplementation && !headers) return undefined;
-
-        return async (input, init) => {
-            const requestHeaders = new Headers(headers);
-            for (const [name, value] of Object.entries(init.headers)) {
-                requestHeaders.set(name, value);
-            }
-            return (fetchImplementation ?? globalThis.fetch)(input, {
-                ...init,
-                headers: requestHeaders,
-                signal: init.signal as AbortSignal,
-            });
-        };
+    /** Immediately continues a currently pending reconnect delay. */
+    retryNow(): void {
+        this.connection.retryNow();
     }
 
-    private enqueueEvent(
-        event: MessageEvent,
-        source: EventSource,
-        lifecycleVersion: number,
-    ): void {
+    private enqueueEvent(event: MessageEvent, lifecycle: number): void {
         this.deliveryChain = this.deliveryChain
             .then(async () => {
-                if (
-                    this.source !== source ||
-                    this.lifecycleVersion !== lifecycleVersion
-                )
-                    return;
-                await this.handleEvent(event, source, lifecycleVersion);
+                if (!this.connection.isLifecycleCurrent(lifecycle)) return;
+                await this.handleEvent(event, lifecycle);
             })
             .catch(() => {
                 // handleEvent contains consumer failures; keep the queue alive
@@ -193,8 +216,7 @@ export class SseSubscription<
 
     private async handleEvent(
         event: MessageEvent,
-        source: EventSource,
-        lifecycleVersion: number,
+        lifecycle: number,
     ): Promise<void> {
         let deliveryStarted = false;
         try {
@@ -209,11 +231,7 @@ export class SseSubscription<
                       >,
                       raw,
                   );
-            if (
-                this.source !== source ||
-                this.lifecycleVersion !== lifecycleVersion
-            )
-                return;
+            if (!this.connection.isLifecycleCurrent(lifecycle)) return;
             deliveryStarted = true;
             await this.options.onEvent(
                 parsed as TContracts extends readonly []
@@ -223,29 +241,15 @@ export class SseSubscription<
         } catch (error) {
             if (
                 !deliveryStarted &&
-                (this.source !== source ||
-                    this.lifecycleVersion !== lifecycleVersion)
-            )
+                !this.connection.isLifecycleCurrent(lifecycle)
+            ) {
                 return;
+            }
             try {
                 await this.options.onEventError?.(error, event);
             } catch {
-                // EventSource listeners cannot observe rejected promises.
+                // Consumer error observers cannot disrupt stream delivery.
             }
-        }
-    }
-
-    private emitState(state: SseConnectionState): void {
-        if (state === this.state) return;
-        this.state = state;
-        const onStateChange = this.options.onStateChange;
-        if (!onStateChange) return;
-        try {
-            void Promise.resolve(onStateChange(state)).catch(() => {
-                // EventSource listeners cannot observe rejected promises.
-            });
-        } catch {
-            // State observers must not disrupt connection lifecycle.
         }
     }
 }

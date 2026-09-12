@@ -8,7 +8,12 @@ import {
     type StandardSchemaV1,
 } from "@kuma-00/bot-kit-contracts";
 
-/** Injectable subset of Fetch used by transport clients. */
+/**
+ * Injectable subset of Fetch used by transport clients.
+ *
+ * Implementations should honor `RequestInit.signal` so cancelled requests can
+ * release their underlying resources promptly.
+ */
 export type FetchLike = (
     input: RequestInfo | URL,
     init?: RequestInit,

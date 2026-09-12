@@ -7,6 +7,14 @@ import {
 import { schema } from "../../../tests/schema.ts";
 import { HttpClient, SseSubscription } from "../src/index.ts";
 
+async function waitFor(condition: () => boolean): Promise<void> {
+    for (let index = 0; index < 100; index++) {
+        if (condition()) return;
+        await Bun.sleep(1);
+    }
+    throw new Error("condition was not reached");
+}
+
 const requestSchema = schema<{
     params: { id: string };
     query?: { active: boolean };
@@ -638,6 +646,7 @@ describe("SseSubscription", () => {
     test("discards a connection stopped synchronously by custom fetch", async () => {
         const states: string[] = [];
         let fetches = 0;
+        let cancellations = 0;
         let subscription: SseSubscription<"Updated", 1, typeof payload>;
         subscription = new SseSubscription({
             url: "https://example.test/events",
@@ -645,7 +654,14 @@ describe("SseSubscription", () => {
             fetch: async () => {
                 fetches++;
                 subscription.stop();
-                return new Response(null, { status: 204 });
+                return new Response(
+                    new ReadableStream({
+                        cancel: () => {
+                            cancellations++;
+                        },
+                    }),
+                    { status: 204 },
+                );
             },
             onStateChange: (state) => {
                 states.push(state);
@@ -659,6 +675,51 @@ describe("SseSubscription", () => {
         expect(fetches).toBe(1);
         expect(states).toEqual(["connecting", "closed"]);
         expect(subscription.readyState).toBe(2);
+        await waitFor(() => cancellations === 1);
+    });
+
+    test("restarts after a fetch that ignores abort", async () => {
+        let fetches = 0;
+        let firstSignal: AbortSignal | undefined;
+        let resolveFirst: (() => void) | undefined;
+        let cancellations = 0;
+        const first = new Promise<Response>((resolve) => {
+            resolveFirst = () =>
+                resolve(
+                    new Response(
+                        new ReadableStream({
+                            cancel: () => {
+                                cancellations++;
+                            },
+                        }),
+                        { status: 204 },
+                    ),
+                );
+        });
+        const subscription = new SseSubscription({
+            url: "https://example.test/events",
+            contract,
+            reconnect: false,
+            fetch: async (_input, init) => {
+                fetches++;
+                if (fetches === 1) {
+                    firstSignal = init?.signal ?? undefined;
+                    return first;
+                }
+                return new Response(null, { status: 204 });
+            },
+            onEvent: () => {},
+        });
+
+        subscription.start();
+        await waitFor(() => firstSignal !== undefined);
+        subscription.stop();
+        subscription.start();
+        await waitFor(() => fetches === 2 && subscription.readyState === 2);
+
+        expect(firstSignal?.aborted).toBe(true);
+        resolveFirst?.();
+        await waitFor(() => cancellations === 1);
     });
 
     test("contains rejected event callbacks and error handlers", async () => {

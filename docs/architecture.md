@@ -23,7 +23,7 @@ backend ───→ contracts ←── elysia
 
 - 設定sourceの統合と検証
 - HTTP・イベント契約
-- timeout、abort、API key、SSE再接続
+- timeout、abort、API key、transport所有のSSE接続・再接続
 - 汎用的な静的Registry生成
 - Discord Clientのlifecycle、型安全なCommand階層
 - Discord Voice接続、切断復旧、cleanup
