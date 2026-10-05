@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/kuma-00/discord-bot-kit/compare/v1.5.0...v1.5.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* use message flags when deferring ephemeral replies ([b47e146](https://github.com/kuma-00/discord-bot-kit/commit/b47e1467cfcb184aca5b6c9fddb8bc8c07b1be64))
+
 ## [1.5.0](https://github.com/kuma-00/discord-bot-kit/compare/v1.4.0...v1.5.0) (2026-09-12)
 
 
