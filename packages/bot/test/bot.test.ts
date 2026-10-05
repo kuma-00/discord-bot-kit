@@ -7,6 +7,8 @@ import {
     type ChatInputCommandInteraction,
     type Client,
     ContextMenuCommandBuilder,
+    type InteractionDeferReplyOptions,
+    MessageFlags,
     SlashCommandBuilder,
 } from "discord.js";
 import { OperationTracker } from "../src/execution.ts";
@@ -395,47 +397,95 @@ describe("help embed", () => {
 });
 
 describe("dispatcher", () => {
-    test("dispatches a subcommand with explicit defer policy", async () => {
-        let executed = false;
-        let deferredEphemeral: boolean | undefined;
-        const registry = createBotRegistry([
-            rootCommand(),
-            {
-                ...subcommand(() => {
-                    executed = true;
-                }),
-                execution: { defer: true, ephemeral: true },
-            },
-        ]);
-        const dispatcher = new CommandDispatcher({
-            client: {} as Client,
-            registry,
+    const deferPolicyCases: readonly {
+        readonly name: string;
+        readonly runtimeEphemeral?: boolean;
+        readonly commandEphemeral?: boolean;
+        readonly expected: InteractionDeferReplyOptions;
+    }[] = [
+        {
+            name: "command ephemeral true sets the ephemeral flag",
+            commandEphemeral: true,
+            expected: { flags: MessageFlags.Ephemeral },
+        },
+        {
+            name: "command ephemeral false omits defer options",
+            commandEphemeral: false,
+            expected: {},
+        },
+        {
+            name: "omitted ephemeral settings omit defer options",
+            expected: {},
+        },
+        {
+            name: "runtime ephemeral true sets the ephemeral flag",
+            runtimeEphemeral: true,
+            expected: { flags: MessageFlags.Ephemeral },
+        },
+        {
+            name: "command false overrides runtime ephemeral true",
+            runtimeEphemeral: true,
+            commandEphemeral: false,
+            expected: {},
+        },
+    ];
+
+    for (const scenario of deferPolicyCases) {
+        test(`dispatches with ${scenario.name}`, async () => {
+            let executed = false;
+            let deferOptions: InteractionDeferReplyOptions | undefined;
+            const registry = createBotRegistry([
+                rootCommand(),
+                {
+                    ...subcommand(() => {
+                        executed = true;
+                    }),
+                    execution: {
+                        defer: true,
+                        ...(scenario.commandEphemeral === undefined
+                            ? {}
+                            : { ephemeral: scenario.commandEphemeral }),
+                    },
+                },
+            ]);
+            const dispatcher = new CommandDispatcher({
+                client: {} as Client,
+                registry,
+                ...(scenario.runtimeEphemeral === undefined
+                    ? {}
+                    : {
+                          execution: {
+                              ephemeral: scenario.runtimeEphemeral,
+                          },
+                      }),
+            });
+            const interaction = {
+                commandName: "queue",
+                deferred: false,
+                replied: false,
+                isAutocomplete: () => false,
+                isChatInputCommand: () => true,
+                isContextMenuCommand: () => false,
+                isRepliable: () => true,
+                inGuild: () => true,
+                inCachedGuild: () => true,
+                deferReply: async (options: InteractionDeferReplyOptions) => {
+                    deferOptions = options;
+                },
+                options: {
+                    getSubcommandGroup: () => null,
+                    getSubcommand: () => "remove",
+                },
+            } as unknown as ChatInputCommandInteraction;
+            expect(await dispatcher.dispatch(interaction)).toEqual({
+                handled: true,
+                commandId: "queue/remove",
+            });
+            expect(executed).toBe(true);
+            expect(deferOptions).toStrictEqual(scenario.expected);
+            expect(Object.hasOwn(deferOptions ?? {}, "ephemeral")).toBe(false);
         });
-        const interaction = {
-            commandName: "queue",
-            deferred: false,
-            replied: false,
-            isAutocomplete: () => false,
-            isChatInputCommand: () => true,
-            isContextMenuCommand: () => false,
-            isRepliable: () => true,
-            inGuild: () => true,
-            inCachedGuild: () => true,
-            deferReply: async ({ ephemeral }: { ephemeral: boolean }) => {
-                deferredEphemeral = ephemeral;
-            },
-            options: {
-                getSubcommandGroup: () => null,
-                getSubcommand: () => "remove",
-            },
-        } as unknown as ChatInputCommandInteraction;
-        expect(await dispatcher.dispatch(interaction)).toEqual({
-            handled: true,
-            commandId: "queue/remove",
-        });
-        expect(executed).toBe(true);
-        expect(deferredEphemeral).toBe(true);
-    });
+    }
 
     test("returns structured results for unknown and guild-only commands", async () => {
         const registry = createBotRegistry([

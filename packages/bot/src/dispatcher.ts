@@ -3,6 +3,7 @@ import type {
     Client,
     Interaction,
 } from "discord.js";
+import { MessageFlags } from "discord.js";
 import { ExecutionTimeoutError } from "./errors.ts";
 import { OperationTracker } from "./execution.ts";
 import type { BotRegistry } from "./registry.ts";
@@ -235,9 +236,11 @@ export class CommandDispatcher<TClient extends Client, TServices = undefined> {
                     !interaction.deferred &&
                     !interaction.replied
                 ) {
-                    await interaction.deferReply({
-                        ephemeral: policy.ephemeral ?? false,
-                    });
+                    await interaction.deferReply(
+                        policy.ephemeral
+                            ? { flags: MessageFlags.Ephemeral }
+                            : {},
+                    );
                 }
                 const execute = command.execute as unknown as (
                     client: Client,
