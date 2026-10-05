@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
     ApplicationCommandType,
     type ChatInputCommandInteraction,
@@ -66,6 +66,7 @@ describe("command registry", () => {
                   client: Client;
                   interaction: ChatInputCommandInteraction;
                   signal: AbortSignal;
+                  services: undefined;
               }
             | undefined;
         const command = defineGuildCommand({
@@ -78,10 +79,18 @@ describe("command registry", () => {
             },
         });
 
-        await command.execute?.(client, interaction, { signal });
+        await command.execute?.(client, interaction, {
+            signal,
+            services: undefined,
+        });
         expect(command.kind).toBe("chat-input");
         expect(command.guildOnly).toBe(true);
-        expect(received).toEqual({ client, interaction, signal });
+        expect(received).toEqual({
+            client,
+            interaction,
+            signal,
+            services: undefined,
+        });
     });
 
     test("composes subcommands and application command JSON", () => {
@@ -954,13 +963,155 @@ describe("registry generator", () => {
             built.content.indexOf("commands/b.ts"),
         );
         expect(built.content).toContain(
-            "DiscordBotRuntimeOptions<BotRegistryClient<typeof botRegistry>>",
+            "BotRegistryServices<typeof botRegistry>",
+        );
+        expect(built.content).toContain(
+            "export const botRegistry = createBotRegistry(\n    [\n        // Commands sorted by module path.\n        command0,\n        command1,\n    ],\n    [\n        // Events sorted by module path.\n        event0,\n    ],\n);",
         );
         const result = await generateBotRegistry(config);
         expect(result.changed).toBe(true);
         expect((await checkBotRegistry(config)).changed).toBe(false);
         await Bun.write(config.outputPath, "// stale");
         expect(checkBotRegistry(config)).rejects.toThrow(/stale/);
+    });
+
+    test("sorts imports by Biome path order without changing registry definition order", async () => {
+        const directory = await mkdtemp(
+            join(tmpdir(), "bot-kit-natural-generator-"),
+        );
+        temporaryDirectories.push(directory);
+        const commands = join(directory, "zcommands");
+        const events = join(directory, "aevents");
+        await mkdir(commands);
+        await mkdir(events);
+        const outputDirectory = join(commands, "out");
+        await mkdir(outputDirectory);
+        const commandFiles = [
+            "_a.ts",
+            "A2.ts",
+            "a1.ts",
+            "a_b.ts",
+            "a-b.ts",
+            "ab.ts",
+            "c1.ts",
+            "c10.ts",
+            "c2.ts",
+            "z.ts",
+            "é.ts",
+            "a.ts",
+            "a/b.ts",
+        ];
+        for (const [index, file] of commandFiles.entries()) {
+            const path = join(outputDirectory, file);
+            await mkdir(dirname(path), { recursive: true });
+            const id = `definition-${index}`;
+            await Bun.write(
+                path,
+                `export default { id: "${id}", kind: "chat-input", builder: { toJSON() { return { name: "${id}" }; } } };`,
+            );
+        }
+        await mkdir(join(commands, "_a"));
+        await Bun.write(
+            join(commands, "_a", "c.ts"),
+            'export default { id: "parent-definition", kind: "chat-input", builder: { toJSON() { return { name: "parent-definition" }; } } };',
+        );
+        await Bun.write(
+            join(events, "ready.ts"),
+            'export default { id: "ready", event: "ready", execute() {} };',
+        );
+        const config = {
+            commandSourceDir: commands,
+            eventSourceDir: events,
+            outputPath: join(outputDirectory, "generated.ts"),
+        };
+
+        const built = await buildBotRegistryModule(config);
+        const generatedImports = built.content
+            .split("\n")
+            .filter(
+                (line) =>
+                    line.startsWith("import command") ||
+                    line.startsWith("import event"),
+            );
+        expect(generatedImports).toEqual([
+            'import event0 from "../../aevents/ready.ts";',
+            'import command0 from "../_a/c.ts";',
+            'import command2 from "./_a.ts";',
+            'import command1 from "./A2.ts";',
+            'import command5 from "./a/b.ts";',
+            'import command4 from "./a.ts";',
+            'import command7 from "./a_b.ts";',
+            'import command3 from "./a-b.ts";',
+            'import command6 from "./a1.ts";',
+            'import command8 from "./ab.ts";',
+            'import command9 from "./c1.ts";',
+            'import command11 from "./c2.ts";',
+            'import command10 from "./c10.ts";',
+            'import command12 from "./z.ts";',
+            'import command13 from "./é.ts";',
+        ]);
+        expect(built.content).toContain(
+            `        // Commands sorted by module path.\n${Array.from(
+                { length: 14 },
+                (_, index) => `        command${index},`,
+            ).join("\n")}`,
+        );
+
+        await generateBotRegistry(config);
+        expect((await checkBotRegistry(config)).changed).toBe(false);
+    });
+
+    test("canonicalizes quoted paths to Biome import formatting", async () => {
+        if (process.platform === "win32") return;
+
+        const directory = await mkdtemp(
+            join(tmpdir(), "bot-kit-quoted-generator-"),
+        );
+        temporaryDirectories.push(directory);
+        const commands = join(directory, "commands");
+        const events = join(directory, "events");
+        const outputPath = join(commands, "out", "generated.ts");
+        await mkdir(join(commands, "out"), { recursive: true });
+        await mkdir(events, { recursive: true });
+        const commandFiles = [
+            'a"é.ts',
+            'b""é\'.ts',
+            "c\"'.ts",
+            "d' only.ts",
+            "é space.ts",
+        ];
+        for (const [index, file] of commandFiles.entries()) {
+            const id = `quoted-${index}`;
+            await Bun.write(
+                join(commands, "out", file),
+                `export default { id: "${id}", kind: "chat-input", builder: { toJSON() { return { name: "${id}" }; } } };`,
+            );
+        }
+        await Bun.write(
+            join(events, "ready.ts"),
+            'export default { id: "ready", event: "ready", execute() {} };',
+        );
+        const config = {
+            commandSourceDir: commands,
+            eventSourceDir: events,
+            outputPath,
+        };
+        const built = await buildBotRegistryModule(config);
+        const repositoryRoot = join(import.meta.dir, "../../..");
+        const formatter = Bun.spawnSync(
+            [
+                join(repositoryRoot, "node_modules", ".bin", "biome"),
+                "check",
+                "--write",
+                `--stdin-file-path=${join(repositoryRoot, "packages/bot/test/generated.ts")}`,
+            ],
+            { stdin: new TextEncoder().encode(built.content) },
+        );
+        expect(formatter.exitCode).toBe(0);
+        const formatted = formatter.stdout.toString();
+        expect(formatted).toBe(built.content);
+        await Bun.write(outputPath, formatted);
+        expect((await checkBotRegistry(config)).changed).toBe(false);
     });
 
     test("rejects invalid default exports and empty sources", async () => {

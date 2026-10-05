@@ -9,17 +9,26 @@ import { RegistryValidationError } from "./errors.ts";
 import type { BotCommand, BotEvent } from "./types.ts";
 
 /** Validated command lookup tables, event handlers, and Discord REST payloads. */
-export interface BotRegistry<TClient extends Client = Client> {
-    readonly definitions: readonly BotCommand[];
-    readonly rootCommands: ReadonlyMap<string, BotCommand>;
-    readonly executableCommands: ReadonlyMap<string, BotCommand>;
-    readonly events: readonly BotEvent<TClient>[];
+export interface BotRegistry<
+    TClient extends Client = Client,
+    TServices = undefined,
+> {
+    readonly definitions: readonly BotCommand<TServices>[];
+    readonly rootCommands: ReadonlyMap<string, BotCommand<TServices>>;
+    readonly executableCommands: ReadonlyMap<string, BotCommand<TServices>>;
+    readonly events: readonly BotEvent<
+        TClient,
+        keyof import("discord.js").ClientEvents,
+        TServices
+    >[];
     readonly applicationCommands: readonly RESTPostAPIApplicationCommandsJSONBody[];
 }
 
 /** Extracts the Discord client type carried by a bot registry. */
 export type BotRegistryClient<TRegistry> =
-    TRegistry extends BotRegistry<infer TClient> ? TClient : never;
+    TRegistry extends BotRegistry<infer TClient, infer _TServices>
+        ? TClient
+        : never;
 
 function normalizedId(id: string, label: string): string {
     const value = id.trim().toLowerCase();
@@ -33,7 +42,7 @@ function normalizedId(id: string, label: string): string {
 }
 
 function assertBuilderName(
-    command: Extract<BotCommand, { builder: object }>,
+    command: Extract<BotCommand<never>, { builder: object }>,
     actualName: string,
 ): void {
     const expected = normalizedId(command.id, "Command");
@@ -71,12 +80,19 @@ function appendApplicationCommandOption(
  *
  * @throws {RegistryValidationError} For duplicates, invalid parents, or builder mismatches.
  */
-export function createBotRegistry<TClient extends Client = Client>(
-    definitions: readonly BotCommand[],
-    events: readonly BotEvent<TClient>[] = [],
-): BotRegistry<TClient> {
-    const byKey = new Map<string, BotCommand>();
-    const roots = new Map<string, BotCommand>();
+export function createBotRegistry<
+    TClient extends Client = Client,
+    TServices = undefined,
+>(
+    definitions: readonly BotCommand<TServices>[],
+    events: readonly BotEvent<
+        TClient,
+        keyof import("discord.js").ClientEvents,
+        TServices
+    >[] = [],
+): BotRegistry<TClient, TServices> {
+    const byKey = new Map<string, BotCommand<TServices>>();
+    const roots = new Map<string, BotCommand<TServices>>();
     const applicationCommandById = new Map<
         string,
         RESTPostAPIApplicationCommandsJSONBody
@@ -108,7 +124,10 @@ export function createBotRegistry<TClient extends Client = Client>(
 
     const groups = new Map<string, SubcommandGroupBuilder>();
     type SubcommandGroupBuilder = {
-        definition: Extract<BotCommand, { kind: "subcommand-group" }>;
+        definition: Extract<
+            BotCommand<TServices>,
+            { kind: "subcommand-group" }
+        >;
         builder: SlashCommandSubcommandGroupBuilder;
     };
     for (const command of definitions) {
@@ -197,3 +216,9 @@ export function createBotRegistry<TClient extends Client = Client>(
         applicationCommands: [...applicationCommandById.values()],
     };
 }
+
+/** Extracts the consumer services type required by the generated bot factory. */
+export type BotRegistryServices<TRegistry> =
+    TRegistry extends BotRegistry<infer _TClient, infer TServices>
+        ? TServices
+        : never;

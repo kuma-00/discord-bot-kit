@@ -21,3 +21,10 @@
 公開symbolの追加・削除時はroot `src/index.ts` と `jsr.json` のexportsを確認し、
 利用者向けのJSDocとテストを同時に更新します。内部helperをテスト都合だけでrootから
 exportしません。
+
+M1〜M5の追加APIは`createCommandDefinition`、`BotRegistryServices`、services付きcontext・
+runtime options、dispatch wrapper/未処理hook、`AccessFailure`と生成・status helper、
+`accessFailureResponse`、`SseBrokerOptions`とscope API、Elysiaの`AccessCheck` /
+`SseResponseFactory`、registry対応`RealtimeControllerOptions`です。
+既存subpath内の追加のため新しいmanifest exportは不要です。
+[利用例](minimum-integration.md)に配送対象・所有・cleanupを示します。

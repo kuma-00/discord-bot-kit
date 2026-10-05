@@ -34,6 +34,15 @@ replace validated behavior with unchecked casts or copied internals.
 6. Remove unsafe casts that hide Standard Schema failures.
 7. Ensure unexpected errors map to safe responses and server-side diagnostics.
 
+Access failures bypass the contract error-details schema only when the response
+has `kind: "access"`, matching `unauthorized`/401 or `forbidden`/403 fields,
+and no `details` property. Request-input bypass is limited to
+`invalid-input`/400, `invalid-multipart`/400, and `payload-too-large`/413 with
+`kind: "request-input"` and no `details`. Unknown markers, mismatched fields,
+or added `details` are `invalid-error-response`. Valid bypasses classify as HTTP
+failures. Other declared failures still validate details; safe 500
+classification is unchanged.
+
 ## Transport Failure
 
 Handle `TransportFailureDetails.kind` deliberately:
@@ -67,6 +76,22 @@ Never log API-key header values.
 8. Confirm that server subscribers and frontend online/visibility listeners are
    removed.
 
+For scoped SSE, compare scope strings exactly: they are opaque, nonempty values;
+empty and whitespace-only scopes are invalid and must throw rather than fall
+back to broadcast. A heartbeat uses an optional 1..2,147,483,647 ms safe
+integer and emits an SSE comment.
+Confirm the mandatory event-stream content type remains set after custom
+headers. Cancellation, abort, and enqueue failure should release the subscriber,
+listeners, timer, and empty scope. In Elysia, configure only one of `broker` or
+`responseFactory`; authenticate and authorize before creating a subscription.
+
+For a multi-contract `RealtimeController`, confirm exactly one of `contract`
+and `contracts` is supplied, and narrow `lastEvent` by `type` before accessing
+its payload. Unknown type/version or payload errors should reach
+`onEventError` without closing the stream. Verify that final Svelte store
+unsubscribe stops the controller; snapshot refresh and event idempotency remain
+consumer responsibilities.
+
 Do not switch to WebSocket as a repair; SSE is the supported realtime transport.
 
 ## Discord Lifecycle or Dispatch Failure
@@ -78,5 +103,19 @@ Do not switch to WebSocket as a repair; SSE is the supported realtime transport.
 4. Confirm handlers were registered once and login succeeded.
 5. Inspect the injected error handler before adding local catch blocks.
 6. Confirm `stop` destroys the client during shutdown and test cleanup.
+7. Use static default-export definitions and `createBotRegistry(commands, events)`;
+   inspect the generated factory when registry generation is used. Inject the
+   same consumer-owned services object into the bot runtime.
+8. `dispatchWrapper` includes defer and the unhandled hook, but adds no timeout.
+   When continuing kit dispatch, call and await `next()` once while the wrapper
+   is active; a wrapper may return a `DispatchResult` without calling it.
+   Calling `next()` more than once or after the wrapper settles throws. The hook
+   runs only for unhandled results returned by internal kit dispatch;
+   wrapper/hook exceptions belong to the dispatch boundary and are not sent
+   back through that hook. `stop` requests
+   cooperative cancellation of tracked dispatch work.
+9. Chat-input defer is enabled only by explicit runtime defaults or command
+   settings; do not assume an implicit default defer when diagnosing an
+   interaction timeout.
 
 Do not add runtime directory scanning to solve missing registrations.

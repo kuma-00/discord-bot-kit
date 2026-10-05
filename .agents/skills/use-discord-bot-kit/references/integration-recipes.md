@@ -70,17 +70,43 @@ parsing, schema failure, and secret redaction.
 
 ## Discord Bot
 
-1. Define `BotCommand` and `BotEvent` values with static imports.
-2. Pass explicit command and event arrays to `createDiscordBot`.
-3. Supply the required `clientFactory`, only the required Discord intents, and
-   a logger and error handler that do not expose secrets.
-4. Start once during application startup and call `stop` during shutdown.
-5. Inject a fake client through `clientFactory` in tests to avoid connecting to
-   Discord.
+Define command and event modules as static default exports. Use
+`createCommandDefinition<Services>()` and
+`createEventDefinition<Client, Services>()` when handlers need typed services;
+the consumer bootstrap creates those services. The consumer starts and shuts
+down its services; the kit only forwards the reference. Register the arrays
+with `createBotRegistry(commands, events)` and pass the same services object to
+`createDiscordBot(registry, options)`. `createGeneratedDiscordBot` is the
+generated-registry equivalent. The same object reference reaches command,
+autocomplete, and event handlers. A services-typed registry requires
+`options.services`. For a registry without services, the option may be omitted
+and `context.services` defaults to `undefined`.
+Supply the required `clientFactory`, only the
+required Discord intents, and a logger and error handler that do not expose
+secrets. The bot kit accepts a standard Discord.js `Client`; a consumer
+subclass is unnecessary. Start once during application startup and call `stop`
+during shutdown. Tests can inject a fake client through `clientFactory`.
 
-Remember that chat input commands defer by default, autocomplete has a separate
-path, registry IDs are normalized, and duplicates are rejected. Keep voice,
-queues, persistence, and command domain logic outside the library.
+`dispatchWrapper(interaction, next, { signal, services })` wraps command
+dispatch from before defer through the unhandled-interaction hook. When
+continuing kit dispatch, call and await `next()` once while the wrapper is
+active; a wrapper may instead return a `DispatchResult` without calling it.
+Calling `next()` more than once or after the wrapper settles throws. The hook
+`onUnhandledInteraction(interaction, result, context)` runs once for an
+unhandled result returned by internal kit dispatch and never for a handled
+interaction. Buttons and modals do not receive an automatic reply. Wrapper and
+hook exceptions reach the dispatch error boundary. A `dispatch-failed` result
+is not sent back through the unhandled hook. Without a boundary, standalone
+dispatch rethrows. Existing
+command timeout behavior applies to commands; the wrapper and hook have no
+additional timeout. `stop` tracks the full dispatch and requests cooperative
+abort through its signal.
+
+Chat-input commands defer only when explicitly enabled by runtime defaults or
+command settings. Make defer, ephemeral, and timeout behavior explicit where
+needed; do not assume an implicit default defer. Keep voice, queues, persistence,
+and command domain logic outside the library. Registry IDs are normalized,
+duplicates are rejected, and autocomplete has a separate dispatch path.
 
 ## Voice Connection
 
@@ -114,6 +140,16 @@ input. `maxBytes` must be a non-negative safe integer and produces 413, while
 missing/invalid multipart input produces 400. These framework failures carry
 `kind: "request-input"`; malformed markers are rejected by the client. Do not
 set a manual multipart boundary header.
+
+Only a marker with the exact supported kind, code, status, and no `details`
+bypasses the contract error-details schema. Access failures use `kind: "access"`
+with `unauthorized`/401 or `forbidden`/403. Request-input failures use
+`invalid-input`/400, `invalid-multipart`/400, and `payload-too-large`/413.
+Unknown markers, mismatched code/status pairs, or a `details` property on these
+standard failures are `invalid-error-response`. Other declared domain errors
+still validate `error.details` against the contract schema. Safe 500 behavior
+is unchanged; if the error schema rejects `undefined`, the result remains
+`invalid-error-response`.
 
 Test valid requests, invalid params/query/body, invalid handler output,
 authentication failure, expected domain failure, and unexpected exceptions.
@@ -151,7 +187,10 @@ directly to `HttpClient` through an injected Fetch implementation.
 1. Define an event contract with an envelope containing `id`, `type`, `version`,
    `occurredAt`, optional `guildId`, and validated `payload`.
 2. Publish events from `SseEventBroker` and return its response from a
-   consumer-owned route.
+   consumer-owned route. `publish(event)` sends to all active scoped and
+   unscoped subscribers; `publishTo(scope, event)` sends only to subscribers
+   with that exact scope. `response(signal?)` creates an unscoped response and
+   `responseFor(scope, signal?)` creates a scoped response.
 3. Consume the stream with `SseSubscription`, or use `RealtimeController` when
    frontend connection state, last-event state, and connection failures are
    needed. Leave transient retry ownership in transport; do not wrap either
@@ -168,6 +207,32 @@ abort, EOF, 408/425/429, and 5xx responses retry by default; 401/403/404/204 and
 invalid SSE responses stay closed. Resume after corrected authentication or
 configuration with an explicit `start()` rather than an automatic terminal
 failure loop.
+
+Scopes are nonempty opaque strings; comparison does not normalize them, and an
+invalid scope throws instead of falling back to an unscoped broadcast. The
+broker's optional `heartbeatIntervalMs` must be an integer from 1 through
+2,147,483,647 milliseconds. Heartbeats are SSE comments, not domain events.
+Custom headers can add or replace headers, while the broker keeps its mandatory
+`text/event-stream` content type. Abort, stream cancellation, or enqueue failure
+cleans up the subscriber, abort listener, heartbeat timer, and empty scope.
+
+For Elysia SSE, configure exactly one of `broker` or
+`responseFactory({ request, params })`. `authorize({ request, params })` runs
+after API-key authentication and before route execution or subscription; return
+`undefined` to allow access or an `AccessFailure` to deny it. A response factory
+may return an `AccessFailure` or a consumer-created `Response`. Call the scoped
+broker response only after access is granted. Throws or rejected promises from
+authorization or the factory become safe 500 responses through the backend
+error boundary.
+
+`RealtimeController` accepts exactly one of `contract` or
+`contracts: createEventRegistry([... ] as const)`. A registry preserves the
+`lastEvent` discriminated union, including through Svelte stores; narrow by
+`type` before reading its payload. Unknown type/version and invalid payload
+errors are reported through `onEventError` without closing the connection.
+Transport owns start, stop, retry, and failure classification. The consumer
+owns authoritative snapshot refresh, idempotency, and the controller's
+lifecycle; the last Svelte store unsubscribe stops its connection.
 
 Transport carries the SSE `id:` value in `Last-Event-ID` across automatic
 attempts but does not deduplicate events or restore domain state. Make handlers

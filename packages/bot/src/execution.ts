@@ -22,6 +22,7 @@ export class OperationTracker {
         id: string,
         timeoutMs: number | undefined,
         operation: (signal: AbortSignal) => Promise<T> | T,
+        parentSignal?: AbortSignal,
     ): Promise<T> {
         if (
             timeoutMs !== undefined &&
@@ -31,7 +32,12 @@ export class OperationTracker {
         }
         const controller = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const operationPromise = Promise.resolve(operation(controller.signal));
+        const abort = () => controller.abort(parentSignal?.reason);
+        if (parentSignal?.aborted) abort();
+        else parentSignal?.addEventListener("abort", abort, { once: true });
+        const operationPromise = Promise.resolve().then(() => {
+            return operation(controller.signal);
+        });
         const active: ActiveOperation = {
             controller,
             promise: operationPromise.then(
@@ -40,7 +46,10 @@ export class OperationTracker {
             ),
         };
         this.active.add(active);
-        void active.promise.finally(() => this.active.delete(active));
+        void active.promise.finally(() => {
+            this.active.delete(active);
+            parentSignal?.removeEventListener("abort", abort);
+        });
         try {
             if (timeoutMs === undefined) return await operationPromise;
             const timeoutPromise = new Promise<never>((_, reject) => {

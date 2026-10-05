@@ -26,3 +26,7 @@ Application event validation failures remain isolated to `onEventError`.
 Incomplete SSE lines and events are buffered up to 1,048,576 characters by
 default. Set `maxBufferSize` to a positive safe integer when a different bound is
 required; exceeding it reports a terminal `stream-format` connection failure.
+
+`kind: "access"`のunauthorized/401・forbidden/403は、marker・code/status・details欠落を
+検証してHTTP failureとして返し、domain error schemaを使いません。不正markerは
+`invalid-error-response`です。request-input 400/413と既存500の分類は維持しています。

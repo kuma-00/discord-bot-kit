@@ -9,9 +9,13 @@ export {
     parseEventEnvelope,
 } from "./events.ts";
 export {
+    type AccessFailure,
+    type AccessFailureCode,
     type ApiFailure,
     type ApiResult,
     type ApiSuccess,
+    accessFailureStatus,
+    createAccessFailure,
     defineHttpContract,
     type HttpBodyEncoding,
     type HttpContract,

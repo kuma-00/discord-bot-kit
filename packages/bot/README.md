@@ -64,3 +64,10 @@ for (const embed of embeds) {
     await interaction.followUp({ embeds: [embed] });
 }
 ```
+
+services付き定義には`createCommandDefinition<Services>()`と
+`createEventDefinition<Client, Services>()`を使用します。生成factoryまで型を保持し、
+runtimeの`services`を同じ参照でcontextへ渡します。初期化・破棄はconsumerの責務です。
+`dispatchWrapper`はdeferからcommand・未処理hookまでを包み、`next`は一度だけ呼べます。
+`onUnhandledInteraction`は理由付き未処理結果を一度通知し、Kitは返信を決めません。
+[利用例](../../docs/minimum-integration.md)を参照してください。

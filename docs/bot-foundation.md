@@ -52,7 +52,7 @@ directory scanやdynamic importは行いません。
 
 `defineCommand`は判別Unionを直接定義するlow-level APIです。単純なtop-level
 chat-input commandには`defineGlobalCommand`と`defineGuildCommand`も使用でき、
-`execute`は`{ client, interaction, signal }`のobject引数を受け取ります。
+`execute`は`{ client, interaction, signal, services }`のobject引数を受け取ります。
 
 ## Lifecycle
 
@@ -72,3 +72,34 @@ bot-kitはClientの具体型を推測して生成せず、factoryが返したins
 単一guildの音声connection transport lifecycle（Ready待機、channel切替、切断復旧、
 cleanup）は`voice` packageが所有します。Audio Player、Queue、guild単位のController管理、
 DB、個別Command、Application CommandのREST同期は利用側の責務です。
+
+## 型付きservicesとdispatch hook
+
+`createCommandDefinition<Services>()`でroot/subcommand/context menu/autocompleteを
+定義し、Eventは`createEventDefinition<Client, Services>()`で定義します。
+`BotRegistry<Client, Services>`と生成factoryはClientとservicesの型を独立して保持します。
+`defineGlobalCommand<Services>` / `defineGuildCommand<Services>`もservicesを推論済みの
+object引数として渡します。services付きregistryではruntimeの`services`が必須です。
+従来の定義では省略でき、contextの`services`は`undefined`です。
+Kitはconsumerのobjectを同一参照で渡すだけで、生成時にserviceを初期化しません。
+serviceの生成・起動・終了はconsumerが所有します。
+handlerがcontextを省略する場合や、rootにexecuteがない場合もhelperで宣言したservices型を保持します。
+
+`dispatchWrapper(interaction, next, { signal, services })`はdefer前からcommandと
+未処理hookまでを包み、`next()`の結果を返します。`next`はwrapperがactiveな間に一度だけ
+呼べます。重複・終了後の呼び出しはthrowします。wrapperが開始したdispatchは、awaitを
+忘れた場合もKitがjoinしますが、ログcontextを保持するため必ず`await next()`してください。
+`onUnhandledInteraction(interaction, result, context)`は内部dispatchが返した未処理結果を
+一度だけ受け取り、handled時には呼ばれません。button/modalを含めKitは自動返信しません。
+返信、autocomplete fallback、logger製品はconsumerが決めます。
+
+wrapper/hookの例外は`phase: "dispatch"`のerror boundaryへ渡します。境界がある場合の
+戻り値は`{ handled: false, reason: "dispatch-failed" }`で、この境界結果は未処理hookへ
+再通知しません。単体dispatcherで境界を省略すると例外を再throwします。
+command/autocompleteのerror boundary自身が失敗した場合は二重通知せず、その失敗を再throwします。
+commandの既存timeoutはcommand/deferに適用し、wrapper/hookは追加timeoutを設けません。
+wrapper、hook、error boundaryを含むdispatch全体をstop時に追跡し、context.signalで
+協調的に終了させます。signalを無視する処理の終了は保証しません。
+
+[最小consumer利用例](minimum-integration.md)と
+[型付きstatic fixture](../packages/bot/test/fixtures/services/generated.ts)を参照してください。

@@ -21,9 +21,12 @@ type RegisteredListener = {
  * Concurrent starts share one login. A start requested during stop waits for
  * shutdown and then starts again.
  */
-export class DiscordBot<TClient extends Client = Client> {
+export class DiscordBot<
+    TClient extends Client = Client,
+    TServices = undefined,
+> {
     readonly client: TClient;
-    readonly dispatcher: CommandDispatcher<TClient>;
+    readonly dispatcher: CommandDispatcher<TClient, TServices>;
     private readonly tracker = new OperationTracker();
     private readonly listeners: RegisteredListener[] = [];
     private startPromise: Promise<TClient> | undefined;
@@ -32,12 +35,18 @@ export class DiscordBot<TClient extends Client = Client> {
     private registered = false;
 
     constructor(
-        readonly registry: BotRegistry<TClient>,
-        private readonly options: DiscordBotRuntimeOptions<TClient>,
+        readonly registry: BotRegistry<TClient, TServices>,
+        private readonly options: DiscordBotRuntimeOptions<
+            TClient,
+            NoInfer<TServices>
+        >,
     ) {
         this.client = options.clientFactory(options.clientOptions);
         this.dispatcher = new CommandDispatcher({
             client: this.client,
+            services: options.services as TServices,
+            dispatchWrapper: options.dispatchWrapper,
+            onUnhandledInteraction: options.onUnhandledInteraction,
             registry,
             execution: options.execution,
             onError: (error, context) => this.handleError(error, context),
@@ -123,12 +132,19 @@ export class DiscordBot<TClient extends Client = Client> {
                 const execute = definition.execute as (
                     client: TClient,
                     args: ClientEvents[typeof definition.event],
-                    context: { readonly signal: AbortSignal },
+                    context: {
+                        readonly signal: AbortSignal;
+                        readonly services: TServices;
+                    },
                 ) => Promise<void> | void;
                 void this.tracker
-                    .run(definition.id, definition.timeoutMs, (signal) =>
-                        execute(this.client, args, { signal }),
-                    )
+                    .run(definition.id, definition.timeoutMs, (signal) => {
+                        signal.throwIfAborted();
+                        return execute(this.client, args, {
+                            signal,
+                            services: this.options.services as TServices,
+                        });
+                    })
                     .catch((error) =>
                         this.handleError(error, {
                             phase: "event",
@@ -216,9 +232,12 @@ export class DiscordBot<TClient extends Client = Client> {
 }
 
 /** Creates a lifecycle-managed Discord bot for a validated registry. */
-export function createDiscordBot<TClient extends Client = Client>(
-    registry: BotRegistry<TClient>,
-    options: DiscordBotRuntimeOptions<TClient>,
-): DiscordBot<TClient> {
+export function createDiscordBot<
+    TClient extends Client = Client,
+    TServices = undefined,
+>(
+    registry: BotRegistry<TClient, TServices>,
+    options: DiscordBotRuntimeOptions<TClient, NoInfer<TServices>>,
+): DiscordBot<TClient, TServices> {
     return new DiscordBot(registry, options);
 }

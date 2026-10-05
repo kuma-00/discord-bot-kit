@@ -68,6 +68,14 @@ import one another directly; share runtime contracts instead.
 - Do not expose configured secrets in logs, errors, fixtures, or generated
   examples.
 - Treat schema validation errors as data-boundary failures, not trusted values.
+- Bypass a contract error-details schema only for a valid `kind: "access"`
+  marker with a matching unauthorized/401 or forbidden/403 code and status and
+  no `details`,
+  or a valid `request-input` marker with matching `invalid-input`/400 or
+  `invalid-multipart`/400 or `payload-too-large`/413 code and status and no
+  `details`. Successful marker checks classify as HTTP failures. Other declared
+  errors still require error-details validation; safe 500 classification is
+  unchanged.
 - Distinguish timeout, caller cancellation, network failure, HTTP failure, and
   invalid responses.
 - Propagate `AbortSignal` and clean up listeners, timers, SSE subscriptions, and
@@ -76,8 +84,7 @@ import one another directly; share runtime contracts instead.
   pass strings, `Blob`/`File`, or repeated field arrays and let the transport
   create the boundary. Configure `maxBytes` when the route has a payload limit;
   it must be a non-negative safe integer and is valid only for multipart.
-  Backend-generated input failures carry `kind: "request-input"` and matching
-  code/status pairs are the only failures that bypass contract error validation.
+  Backend-generated multipart failures carry `kind: "request-input"`.
 - Stop the Discord client during shutdown and in test cleanup.
 - Keep command and event registration static; do not add runtime directory
   scanning.

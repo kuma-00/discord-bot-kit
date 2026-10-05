@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+    createEventRegistry,
     defineEventContract,
     defineHttpContract,
 } from "@kuma-00/bot-kit-contracts";
@@ -176,5 +177,85 @@ describe("RealtimeController", () => {
                 Reflect.deleteProperty(globalThis, "document");
             }
         }
+    });
+
+    test("delivers registered events in order and reports invalid envelopes per event", async () => {
+        const created = defineEventContract({
+            type: "Created",
+            version: 1,
+            payload: schema<{ id: string }>(
+                (value): value is { id: string } =>
+                    typeof value === "object" &&
+                    value !== null &&
+                    typeof (value as { id?: unknown }).id === "string",
+            ),
+        });
+        const deleted = defineEventContract({
+            type: "Deleted",
+            version: 2,
+            payload: schema<{ reason: string }>(
+                (value): value is { reason: string } =>
+                    typeof value === "object" &&
+                    value !== null &&
+                    typeof (value as { reason?: unknown }).reason === "string",
+            ),
+        });
+        const registry = createEventRegistry([created, deleted] as const);
+        let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+        let fetches = 0;
+        const delivered: string[] = [];
+        const errors: unknown[] = [];
+        const controller = new RealtimeController({
+            url: "https://example.test/events",
+            contracts: registry,
+            reconnect: false,
+            fetch: async () => {
+                fetches += 1;
+                return new Response(
+                    new ReadableStream<Uint8Array>({
+                        start(next) {
+                            stream = next;
+                        },
+                    }),
+                    { headers: { "content-type": "text/event-stream" } },
+                );
+            },
+            onEventError: (error) => {
+                errors.push(error);
+            },
+        });
+        controller.lastEvent.subscribe((event) => {
+            if (event) delivered.push(event.type);
+        });
+
+        controller.start();
+        await waitFor(() => controller.state.value === "open");
+        const send = (data: unknown, type = "message") =>
+            stream?.enqueue(
+                new TextEncoder().encode(
+                    `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`,
+                ),
+            );
+        const envelope = (type: string, version: number, payload: unknown) => ({
+            id: `${type}-${version}`,
+            type,
+            version,
+            occurredAt: "2026-01-01T00:00:00Z",
+            payload,
+        });
+        send(envelope("Created", 1, { id: "a" }), "Created");
+        send(envelope("Deleted", 2, { reason: "done" }), "Deleted");
+        send(envelope("Created", 9, { id: "wrong-version" }));
+        send(envelope("Unknown", 1, {}));
+        send(envelope("Deleted", 2, { reason: 5 }), "Deleted");
+        await waitFor(() => delivered.length === 2 && errors.length === 3);
+
+        expect(delivered).toEqual(["Created", "Deleted"]);
+        expect(controller.state.value).toBe("open");
+        controller.stop();
+        controller.start();
+        await waitFor(() => controller.state.value === "open");
+        expect(fetches).toBe(2);
+        controller.stop();
     });
 });

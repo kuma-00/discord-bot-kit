@@ -1,7 +1,10 @@
 import type {
+    AnyEventContract,
     ApiResult,
     EventContract,
     EventEnvelope,
+    EventEnvelopeFor,
+    EventRegistry,
     HttpContract,
     SchemaOutput,
     StandardSchemaV1,
@@ -21,15 +24,35 @@ import {
 export type RealtimeConnectionState = "idle" | "connecting" | "open" | "closed";
 
 /** Configuration for a framework-neutral realtime controller. */
-export interface RealtimeControllerOptions<
+export type RealtimeControllerOptions<
     TType extends string,
     TVersion extends number,
     TPayloadSchema extends StandardSchemaV1,
-> {
+    TContracts extends readonly AnyEventContract[] = readonly [],
+> = RealtimeControllerSharedOptions &
+    (
+        | {
+              /** Single event contract. Exactly one of `contract` and `contracts` is required. */
+              readonly contract: EventContract<TType, TVersion, TPayloadSchema>;
+              /** Event registry. Exactly one of `contract` and `contracts` is required. */
+              readonly contracts?: never;
+          }
+        | {
+              /** Event registry. Exactly one of `contract` and `contracts` is required. */
+              readonly contracts: EventRegistry<TContracts>;
+              /** Single event contract. Exactly one of `contract` and `contracts` is required. */
+              readonly contract?: never;
+          }
+    );
+
+interface RealtimeControllerSharedOptions {
     /** SSE endpoint URL. */
     readonly url: string;
-    /** Contract used to validate every received event envelope. */
-    readonly contract: EventContract<TType, TVersion, TPayloadSchema>;
+    /** Receives JSON, contract, or event-handler failures without closing the connection. */
+    readonly onEventError?: (
+        error: unknown,
+        event: MessageEvent,
+    ) => void | Promise<void>;
     /** Fetch implementation used for every connection attempt. */
     readonly fetch?: FetchLike;
     /** Request headers merged with transport-owned SSE headers. */
@@ -103,13 +126,20 @@ export class RealtimeController<
     TType extends string,
     TVersion extends number,
     TPayloadSchema extends StandardSchemaV1,
+    TContracts extends readonly AnyEventContract[] = readonly [],
 > {
     readonly state: ObservableValue<RealtimeConnectionState> =
         new ObservableValue<RealtimeConnectionState>("idle");
     readonly lastEvent: ObservableValue<
-        EventEnvelope<TType, SchemaOutput<TPayloadSchema>> | undefined
+        | (TContracts extends readonly []
+              ? EventEnvelope<TType, SchemaOutput<TPayloadSchema>>
+              : EventEnvelopeFor<TContracts[number]>)
+        | undefined
     > = new ObservableValue<
-        EventEnvelope<TType, SchemaOutput<TPayloadSchema>> | undefined
+        | (TContracts extends readonly []
+              ? EventEnvelope<TType, SchemaOutput<TPayloadSchema>>
+              : EventEnvelopeFor<TContracts[number]>)
+        | undefined
     >(undefined);
     /** Latest classified connection failure, cleared on open or explicit stop. */
     readonly failure: ObservableValue<SseConnectionFailure | undefined> =
@@ -117,16 +147,25 @@ export class RealtimeController<
     private readonly subscription: SseSubscription<
         TType,
         TVersion,
-        TPayloadSchema
+        TPayloadSchema,
+        TContracts
     >;
     private removeReconnectHints: (() => void) | undefined;
 
     constructor(
-        options: RealtimeControllerOptions<TType, TVersion, TPayloadSchema>,
+        options: RealtimeControllerOptions<
+            TType,
+            TVersion,
+            TPayloadSchema,
+            TContracts
+        >,
     ) {
         this.subscription = new SseSubscription({
             ...options,
             onEvent: (event) => this.lastEvent.set(event),
+            ...(options.onEventError === undefined
+                ? {}
+                : { onEventError: options.onEventError }),
             onConnectionFailure: (failure) => this.failure.set(failure),
             onStateChange: (state) => {
                 if (state === "open") this.failure.set(undefined);

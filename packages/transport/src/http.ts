@@ -239,6 +239,12 @@ export class HttpClient {
                     const hasKind = "kind" in envelopeError;
                     if (hasKind) {
                         const kind = (envelopeError as { kind?: unknown }).kind;
+                        const validAccess =
+                            kind === "access" &&
+                            (code === "unauthorized" || code === "forbidden") &&
+                            response.status ===
+                                (code === "unauthorized" ? 401 : 403) &&
+                            !("details" in envelopeError);
                         const validStatus =
                             (code === "invalid-input" ||
                                 code === "invalid-multipart") &&
@@ -247,13 +253,25 @@ export class HttpClient {
                             code === "payload-too-large" &&
                             response.status === 413;
                         if (
-                            kind !== "request-input" ||
-                            (!validStatus && !validPayloadLimit) ||
-                            "details" in envelopeError
+                            kind === "request-input"
+                                ? (!validStatus && !validPayloadLimit) ||
+                                  "details" in envelopeError
+                                : !validAccess
                         ) {
-                            throw new Error(
-                                "Invalid request-input failure marker",
-                            );
+                            throw new Error("Invalid standard failure marker");
+                        }
+                        if (kind === "access") {
+                            return {
+                                ok: false,
+                                error: {
+                                    code,
+                                    message,
+                                    details: {
+                                        kind: "http",
+                                        status: response.status,
+                                    },
+                                },
+                            };
                         }
                         return {
                             ok: false,

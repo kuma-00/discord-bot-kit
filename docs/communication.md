@@ -33,7 +33,8 @@ Backendが入力を受け付けられない場合の`invalid-input`、`invalid-m
 持たない標準エラーです。
 Transportはmarkerとcode/statusの組み合わせが正しい場合のみHTTP失敗（`{ kind: "http", status }`）としてそのまま返し、
 不正なmarkerやstatus、`details`が混在する標準エラーは`invalid-error-response`にします。
-契約のerror schemaでは検証しません。その他の宣言済み失敗は引き続き
+契約のerror schemaでは検証しません。認証・認可失敗の標準契約も以下のとおり分離します。
+その他の宣言済み失敗は引き続き
 `error.details`を契約schemaで検証します。
 
 ## Backend
@@ -109,3 +110,61 @@ contract validation、`onEvent`、`onEventError`を含むapplication-level deliv
 `stop()`はnetwork connectionを同期的に閉じ、未実行の旧connection eventを破棄します。
 実行開始済みのcallbackは完了を許可し、新connectionのeventはその完了後に処理します。
 automatic reconnectのattempt間でも同じdelivery chainを使い、受信順を維持します。
+
+## 標準401/403
+
+`createAccessFailure("unauthorized")`は`error.kind: "access"`、code
+`unauthorized`の標準failureです。`forbidden`は同じmarkerで権限不足を表します。
+`accessFailureStatus`はそれぞれ401/403を返し、backendの`accessFailureResponse`が
+status付きResponseへserializeします。`authenticateApiKey`も同じ形式を返します。
+どちらもdomain固有detailsを持ちません。Transportはmarker、code/statusの対応、
+`details`プロパティが存在しないことを検証し、`{ kind: "http", status }`を返します。
+object必須のdomain error schemaにも渡しません。不明marker、code/status不一致、detailsの
+混在は`invalid-error-response`です。markerを付けない宣言済みdomain failureのschema検証、
+既存request-input 400/413、safe 500の分類は従来どおりです。safe 500はerror schemaが
+undefinedを拒否する場合、引き続き`invalid-error-response`になります。
+
+Elysiaの`authorize({ request, params })`はAPI key検証後、route実行またはSSE購読前に
+consumerのaccess checkをawaitします。許可はundefined、拒否は`AccessFailure`です。
+認可済みcontext注入や汎用middlewareの責務は持ちません。
+`authorize`とSSE `responseFactory`のthrow/rejectはbackendの既存error boundaryで
+安全な500へ変換し、例外messageを公開しません。500のtransport分類は変更しません。
+
+## 全配信とscope別SSE
+
+`SseEventBroker.publish(event)` / `response(signal?)`は従来の全配信APIです。
+**全配信は非scopeと全scopeのactive subscriberへ届きます。**
+`publishTo(scope, event)` / `responseFor(scope, signal?)`は追加APIです。
+**scope別配信は同じscopeのsubscriberだけへ届き、別scope・非scopeへ届きません。**
+scopeは非空の不透明なstringで、比較時に正規化しません。scope欠落、非string、空文字・
+空白のみはTypeErrorになり、全配信へfallbackしません。guildの認可policyはconsumerが所有します。
+
+| Publish | 非scope | scope A | scope B |
+| --- | --- | --- | --- |
+| `publish(event)` | 配送 | 配送 | 配送 |
+| `publishTo("A", event)` | 非配送 | 配送 | 非配送 |
+| `publishTo("B", event)` | 非配送 | 非配送 | 配送 |
+
+brokerの`heartbeatIntervalMs`は1〜2,147,483,647の安全な整数（ms）で、省略時は無効です。
+Bun timerのoverflowで短い間隔へ変わらないよう、上限を超える値は拒否します。
+heartbeatは`: heartbeat`のSSE commentであり、domain contractを使いません。
+既定headerは`cache-control: no-cache, no-transform`、`connection: keep-alive`、
+`content-type: text/event-stream; charset=utf-8`です。`headers`でproxy用headerを追加・
+上書きでき、content-typeはbrokerが維持します。abort前のresponseは閉じたbodyで返り、
+subscriberを作りません。abort/cancel/enqueue失敗は冪等cleanupへ到達し、subscriber、
+abort listener、heartbeat timerと空scopeを解放します。
+
+Elysiaの`sse`には従来の`broker`か`responseFactory({ request, params })`の一方を渡します。
+consumerがfactory内で認証・認可し、許可後に`responseFor`を呼びます。拒否は標準
+`AccessFailure`またはconsumerのResponseを返せます。認可失敗時はbrokerを呼ばないでください。
+replay、分散配送、slow consumer policy、接続snapshotは提供しません。
+
+## 複数contractのfrontend
+
+`RealtimeController`は単一`contract`か`contracts: EventRegistry`の一方を必須とし、
+registryから`lastEvent`の判別unionを推論します。Svelteの`createRealtimeStores`でも
+その型を保持します。unknown type/version、不正payloadは`onEventError`へ通知し、
+後続eventを受信順に処理します。start/stop/retry・failure分類はtransportへ委譲し、
+controller固有retry/cache更新を追加しません。最終store unsubscribeで停止します。
+
+[最小consumer利用例](minimum-integration.md)を参照してください。

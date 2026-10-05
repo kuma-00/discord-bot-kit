@@ -12,6 +12,33 @@ export type RequestInputFailureCode =
     | "invalid-multipart"
     | "payload-too-large";
 
+/** Stable authorization failures that carry no contract-specific details. */
+export type AccessFailureCode = "unauthorized" | "forbidden";
+
+/** API failure used when a request is unauthenticated or lacks permission. */
+export interface AccessFailure {
+    readonly ok: false;
+    readonly error: {
+        readonly kind: "access";
+        readonly code: AccessFailureCode;
+        readonly message: string;
+        readonly details?: never;
+    };
+}
+
+/** Returns the HTTP status assigned to a standard access failure code. */
+export function accessFailureStatus(code: AccessFailureCode): 401 | 403 {
+    return code === "unauthorized" ? 401 : 403;
+}
+
+/** Creates an access failure with a safe default public message. */
+export function createAccessFailure(
+    code: AccessFailureCode,
+    message = code === "unauthorized" ? "Unauthorized" : "Forbidden",
+): AccessFailure {
+    return { ok: false, error: { kind: "access", code, message } };
+}
+
 /** A serializable API failure. */
 export interface ApiFailure<TDetails = unknown> {
     readonly ok: false;
@@ -28,7 +55,8 @@ export interface ApiFailure<TDetails = unknown> {
               /** Discriminator reserved for framework-generated request failures. */
               readonly kind: "request-input";
               readonly details?: never;
-          };
+          }
+        | AccessFailure["error"];
 }
 
 /** Framework-neutral API result. */

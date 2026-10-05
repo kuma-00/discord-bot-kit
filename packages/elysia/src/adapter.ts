@@ -1,13 +1,18 @@
 import {
     type ApiKeyAuthOptions,
+    accessFailureResponse,
     authenticateApiKey,
     type BackendLogger,
     executeRoute,
     healthResponse,
+    mapBackendError,
     type RouteDefinition,
     type SseEventBroker,
 } from "@kuma-00/bot-kit-backend";
-import type { StandardSchemaV1 } from "@kuma-00/bot-kit-contracts";
+import type {
+    AccessFailure,
+    StandardSchemaV1,
+} from "@kuma-00/bot-kit-contracts";
 import { Elysia } from "elysia";
 
 type AnyRouteDefinition = RouteDefinition<
@@ -16,16 +21,33 @@ type AnyRouteDefinition = RouteDefinition<
     StandardSchemaV1
 >;
 
+/** Consumer-owned SSE response factory; authenticate and authorize before subscribing. */
+export type SseResponseFactory = (context: {
+    readonly request: Request;
+    readonly params: Readonly<Record<string, string>>;
+}) => Response | AccessFailure | Promise<Response | AccessFailure>;
+
+/** Consumer access check limited to standard 401/403 failures; it does not inject route context. */
+export type AccessCheck = (context: {
+    readonly request: Request;
+    readonly params: Readonly<Record<string, string>>;
+}) => AccessFailure | undefined | Promise<AccessFailure | undefined>;
+
 /** Options for creating an Elysia adapter application. */
 export interface CreateElysiaAppOptions {
     readonly service: string;
     readonly routes?: ReadonlyArray<AnyRouteDefinition>;
     readonly apiKey?: ApiKeyAuthOptions;
     readonly healthPath?: string;
-    readonly sse?: {
-        readonly path: string;
-        readonly broker: SseEventBroker;
-    };
+    /** Runs after API-key authentication, before HTTP execution or SSE subscription. */
+    readonly authorize?: AccessCheck;
+    readonly sse?: { readonly path: string } & (
+        | { readonly broker: SseEventBroker; readonly responseFactory?: never }
+        | {
+              readonly responseFactory: SseResponseFactory;
+              readonly broker?: never;
+          }
+    );
     readonly logger?: BackendLogger;
 }
 
@@ -43,7 +65,16 @@ export function createElysiaApp(options: CreateElysiaAppOptions): Elysia {
             async ({ request, body, query, params }) => {
                 if (options.apiKey) {
                     const failure = authenticateApiKey(request, options.apiKey);
-                    if (failure) return Response.json(failure, { status: 401 });
+                    if (failure) return accessFailureResponse(failure);
+                }
+                try {
+                    const denied = await options.authorize?.({
+                        request,
+                        params,
+                    });
+                    if (denied) return accessFailureResponse(denied);
+                } catch (error) {
+                    return mapBackendError(error, options.logger);
                 }
                 return executeRoute(
                     definition,
@@ -63,12 +94,28 @@ export function createElysiaApp(options: CreateElysiaAppOptions): Elysia {
     }
 
     if (options.sse) {
-        app.get(options.sse.path, ({ request }) => {
+        const sse = options.sse;
+        app.get(sse.path, async ({ request, params }) => {
             if (options.apiKey) {
                 const failure = authenticateApiKey(request, options.apiKey);
-                if (failure) return Response.json(failure, { status: 401 });
+                if (failure) return accessFailureResponse(failure);
             }
-            return options.sse?.broker.response(request.signal);
+            try {
+                const denied = await options.authorize?.({ request, params });
+                if (denied) return accessFailureResponse(denied);
+                if (sse.responseFactory) {
+                    const result = await sse.responseFactory({
+                        request,
+                        params,
+                    });
+                    return result instanceof Response
+                        ? result
+                        : accessFailureResponse(result);
+                }
+                return sse.broker.response(request.signal);
+            } catch (error) {
+                return mapBackendError(error, options.logger);
+            }
         });
     }
     return app;

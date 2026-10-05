@@ -35,7 +35,7 @@ export interface HelpEmbedOptions {
     readonly uncategorizedLabel?: string;
 }
 
-type HelpCommand = Exclude<BotCommand, { kind: "context-menu" }>;
+type HelpCommand = Exclude<BotCommand<never>, { kind: "context-menu" }>;
 
 interface HelpField {
     readonly name: string;
@@ -196,8 +196,11 @@ function paginateFields(
  * }
  * ```
  */
-export function createHelpEmbeds(
-    registry: BotRegistry,
+export function createHelpEmbeds<
+    TClient extends import("discord.js").Client,
+    TServices,
+>(
+    registry: BotRegistry<TClient, TServices>,
     options: HelpEmbedOptions = {},
 ): readonly EmbedBuilder[] {
     const uncategorizedLabel = options.uncategorizedLabel ?? "Other";

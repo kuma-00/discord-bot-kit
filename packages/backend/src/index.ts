@@ -1,5 +1,6 @@
 export {
     type ApiKeyAuthOptions,
+    accessFailureResponse,
     authenticateApiKey,
 } from "./auth.ts";
 export { healthResponse } from "./health.ts";
@@ -15,4 +16,8 @@ export {
     type RouteHandler,
     type RouteResult,
 } from "./routes.ts";
-export { type BrokerEvent, SseEventBroker } from "./sse.ts";
+export {
+    type BrokerEvent,
+    type SseBrokerOptions,
+    SseEventBroker,
+} from "./sse.ts";

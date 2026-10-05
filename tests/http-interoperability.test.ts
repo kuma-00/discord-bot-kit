@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { defineRoute, executeRoute } from "../packages/backend/src/index.ts";
-import { defineHttpContract } from "../packages/contracts/src/index.ts";
+import {
+    accessFailureResponse,
+    authenticateApiKey,
+    defineRoute,
+    executeRoute,
+} from "../packages/backend/src/index.ts";
+import {
+    createAccessFailure,
+    defineHttpContract,
+} from "../packages/contracts/src/index.ts";
 import { HttpClient } from "../packages/transport/src/index.ts";
 import { schema } from "./schema.ts";
 
@@ -155,5 +163,85 @@ describe("HTTP backend/transport interoperability", () => {
                 details: { kind: "http", status: 413 },
             },
         });
+    });
+
+    test("passes standard access failures through without domain error validation", async () => {
+        for (const code of ["unauthorized", "forbidden"] as const) {
+            const response = accessFailureResponse(createAccessFailure(code));
+            const accessClient = new HttpClient({
+                baseUrl: "https://example.test",
+                fetch: async () => response,
+            });
+            expect(
+                await accessClient.request(contract, {
+                    body: { mode: "accepted" },
+                }),
+            ).toEqual({
+                ok: false,
+                error: {
+                    code,
+                    message:
+                        code === "unauthorized" ? "Unauthorized" : "Forbidden",
+                    details: {
+                        kind: "http",
+                        status: code === "unauthorized" ? 401 : 403,
+                    },
+                },
+            });
+        }
+    });
+
+    test("API key authentication returns a standard unauthorized response", async () => {
+        const failure = authenticateApiKey(
+            new Request("https://example.test", {
+                headers: { "x-api-key": "bad" },
+            }),
+            { apiKey: "secret" },
+        );
+        expect(failure).toEqual(createAccessFailure("unauthorized"));
+        if (!failure) throw new Error("Expected authentication failure");
+        const response = accessFailureResponse(failure);
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual(
+            createAccessFailure("unauthorized"),
+        );
+    });
+
+    test("rejects forged access markers, status mismatches, and details", async () => {
+        const cases = [
+            {
+                status: 401,
+                error: { kind: "access", code: "declined", message: "No" },
+            },
+            {
+                status: 403,
+                error: { kind: "access", code: "unauthorized", message: "No" },
+            },
+            {
+                status: 401,
+                error: {
+                    kind: "access",
+                    code: "unauthorized",
+                    message: "No",
+                    details: {},
+                },
+            },
+        ];
+        for (const value of cases) {
+            const forgedClient = new HttpClient({
+                baseUrl: "https://example.test",
+                fetch: async () =>
+                    Response.json(
+                        { ok: false, error: value.error },
+                        { status: value.status },
+                    ),
+            });
+            const result = await forgedClient.request(contract, {
+                body: { mode: "accepted" },
+            });
+            expect(result.ok).toBe(false);
+            if (!result.ok)
+                expect(result.error.code).toBe("invalid-error-response");
+        }
     });
 });

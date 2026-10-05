@@ -4,7 +4,9 @@ export type {
     GuildCommandDefinition,
 } from "./commands.ts";
 export {
+    type CommandDefinitionFactory,
     commandKey,
+    createCommandDefinition,
     defineCommand,
     defineGlobalCommand,
     defineGuildCommand,
@@ -35,6 +37,7 @@ export { createDiscordBot, DiscordBot } from "./lifecycle.ts";
 export {
     type BotRegistry,
     type BotRegistryClient,
+    type BotRegistryServices,
     createBotRegistry,
 } from "./registry.ts";
 export type {
@@ -46,6 +49,7 @@ export type {
     CommandMetadata,
     DiscordBotRuntimeOptions,
     DispatchResult,
+    DispatchWrapper,
     ExecutionContext,
     ExecutionPolicy,
     GlobalChatInputCommand,
@@ -56,5 +60,7 @@ export type {
     GuildContextMenuCommand,
     GuildContextMenuCommandInteraction,
     GuildSubcommand,
+    ServicesOptions,
     SubcommandGroup,
+    UnhandledInteractionHandler,
 } from "./types.ts";

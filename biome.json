@@ -6,7 +6,8 @@
             "!**/node_modules",
             "!**/dist",
             "!**/.turbo",
-            "!**/.codegraph"
+            "!**/.codegraph",
+            "!**/.delta"
         ]
     },
     "formatter": {

@@ -114,13 +114,17 @@ function normalizedId(id: string): string {
 }
 
 function validateRegistryDefinitions(
-    commands: readonly BotCommand[],
-    events: readonly BotEvent[],
+    commands: readonly BotCommand<never>[],
+    events: readonly BotEvent<
+        import("discord.js").Client,
+        keyof import("discord.js").ClientEvents,
+        never
+    >[],
 ): void {
     const commandKeys = new Set<string>();
     const roots = new Map<
         string,
-        Extract<BotCommand, { kind: "chat-input" | "context-menu" }>
+        Extract<BotCommand<never>, { kind: "chat-input" | "context-menu" }>
     >();
     const groups = new Set<string>();
 
@@ -249,6 +253,89 @@ async function buildBotFragment(
     }
 }
 
+const IMPORT_ASCII_ORDER =
+    "/\\?#=&;,@:. _-+*!%$()[]{}<>|^~'\"`0123456789AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZz";
+
+function characterWeight(character: string): number {
+    const asciiWeight = IMPORT_ASCII_ORDER.indexOf(character);
+    if (asciiWeight >= 0) return asciiWeight + 33;
+
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (codePoint <= 8 || codePoint >= 128) return codePoint;
+    if (codePoint <= 13) return codePoint + 19;
+    if (codePoint <= 31) return codePoint - 5;
+    if (codePoint === 127) return 27;
+    return codePoint;
+}
+
+function compareNaturalText(left: string, right: string): number {
+    const leftTokens = left.match(/[0-9]+|[^0-9]/gu) ?? [];
+    const rightTokens = right.match(/[0-9]+|[^0-9]/gu) ?? [];
+    const length = Math.min(leftTokens.length, rightTokens.length);
+
+    for (let index = 0; index < length; index++) {
+        const leftToken = leftTokens[index] ?? "";
+        const rightToken = rightTokens[index] ?? "";
+        const leftIsNumber = /^[0-9]+$/.test(leftToken);
+        const rightIsNumber = /^[0-9]+$/.test(rightToken);
+        if (leftIsNumber && rightIsNumber) {
+            const digitLength = leftToken.length - rightToken.length;
+            if (digitLength !== 0) return digitLength;
+            if (leftToken !== rightToken) {
+                return leftToken < rightToken ? -1 : 1;
+            }
+            continue;
+        }
+
+        const weightDifference =
+            characterWeight([...leftToken][0] ?? "") -
+            characterWeight([...rightToken][0] ?? "");
+        if (weightDifference !== 0) return weightDifference;
+    }
+    return leftTokens.length - rightTokens.length;
+}
+
+function compareNaturalPath(left: string, right: string): number {
+    const leftComponents = left.split("/");
+    const rightComponents = right.split("/");
+    const length = Math.min(leftComponents.length, rightComponents.length);
+
+    for (let index = 0; index < length; index++) {
+        const leftComponent = leftComponents[index] ?? "";
+        const rightComponent = rightComponents[index] ?? "";
+        const leftSpecialRank =
+            leftComponent === ".." ? 0 : leftComponent === "." ? 1 : 2;
+        const rightSpecialRank =
+            rightComponent === ".." ? 0 : rightComponent === "." ? 1 : 2;
+        if (leftSpecialRank !== rightSpecialRank) {
+            return leftSpecialRank - rightSpecialRank;
+        }
+        if (leftSpecialRank < 2) continue;
+
+        const componentOrder = compareNaturalText(
+            leftComponent,
+            rightComponent,
+        );
+        if (componentOrder !== 0) return componentOrder;
+    }
+    return leftComponents.length - rightComponents.length;
+}
+
+function canonicalizeImport(statement: string): string {
+    const fromIndex = statement.indexOf(" from ");
+    const path = JSON.parse(statement.slice(fromIndex + 6, -1)) as string;
+    const doubleQuoted = JSON.stringify(path);
+    const quote =
+        (path.match(/"/g)?.length ?? 0) > (path.match(/'/g)?.length ?? 0)
+            ? `'${doubleQuoted.slice(1, -1).replace(/\\"/g, '"').replace(/'/g, "\\'")}'`
+            : doubleQuoted;
+    return `${statement.slice(0, fromIndex + 6)}${quote};`;
+}
+
+function importSortPath(statement: string): string {
+    return statement.slice(statement.indexOf(" from ") + 7, -2);
+}
+
 /**
  * Builds and validates a deterministic bot registry module without writing it.
  *
@@ -263,8 +350,12 @@ export async function buildBotRegistryModule(
     readonly eventCount: number;
 }> {
     const outputPath = resolve(config.outputPath);
-    const commandDefinitions: BotCommand[] = [];
-    const eventDefinitions: BotEvent[] = [];
+    const commandDefinitions: BotCommand<never>[] = [];
+    const eventDefinitions: BotEvent<
+        import("discord.js").Client,
+        keyof import("discord.js").ClientEvents,
+        never
+    >[] = [];
     const commands = await buildBotFragment(
         config.commandSourceDir,
         outputPath,
@@ -272,7 +363,7 @@ export async function buildBotRegistryModule(
         "command",
         (value, { file }) => {
             validateCommand(value, file);
-            commandDefinitions.push(value as BotCommand);
+            commandDefinitions.push(value as BotCommand<never>);
             return true;
         },
     );
@@ -283,27 +374,50 @@ export async function buildBotRegistryModule(
         "event",
         (value, { file }) => {
             validateEvent(value, file);
-            eventDefinitions.push(value as BotEvent);
+            eventDefinitions.push(
+                value as BotEvent<
+                    import("discord.js").Client,
+                    keyof import("discord.js").ClientEvents,
+                    never
+                >,
+            );
             return true;
         },
     );
     validateRegistryDefinitions(commandDefinitions, eventDefinitions);
+    const generatedImports = [...commands.imports, ...events.imports]
+        .map(canonicalizeImport)
+        .sort((left, right) =>
+            compareNaturalPath(importSortPath(left), importSortPath(right)),
+        )
+        .join("\n");
+    const importSection = generatedImports
+        ? `\n${generatedImports}\n\n`
+        : "\n\n";
     const content = `// Generated by ${BOT_PACKAGE_NAME}. Do not edit.
 import {
+    type BotRegistryClient,
+    type BotRegistryServices,
     createBotRegistry,
     createDiscordBot as createRuntimeDiscordBot,
-    type BotRegistryClient,
     type DiscordBotRuntimeOptions,
-} from "${BOT_PACKAGE_NAME}";
-${[...commands.imports, ...events.imports].join("\n")}
-
-/** Validated command and event registry generated from consumer modules. */
-export const botRegistry = createBotRegistry([${commands.identifiers.join(", ")}], [${events.identifiers.join(", ")}]);
+} from "${BOT_PACKAGE_NAME}";${importSection}/** Validated command and event registry generated from consumer modules. */
+export const botRegistry = createBotRegistry(
+    [
+        // Commands sorted by module path.${commands.identifiers.map((identifier) => `\n        ${identifier},`).join("")}
+    ],
+    [
+        // Events sorted by module path.${events.identifiers.map((identifier) => `\n        ${identifier},`).join("")}
+    ],
+);
 /** Discord REST application-command payloads composed from the registry. */
 export const applicationCommands = botRegistry.applicationCommands;
 /** Creates a Discord bot bound to the generated registry. */
 export const createGeneratedDiscordBot = (
-    options: DiscordBotRuntimeOptions<BotRegistryClient<typeof botRegistry>>,
+    options: DiscordBotRuntimeOptions<
+        BotRegistryClient<typeof botRegistry>,
+        BotRegistryServices<typeof botRegistry>
+    >,
 ) => createRuntimeDiscordBot(botRegistry, options);
 `;
     return {
